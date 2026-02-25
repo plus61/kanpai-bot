@@ -1,0 +1,224 @@
+/**
+ * brain.js - Claude APIによる思考エンジン
+ * Kanpai Botの頭脳
+ */
+require('dotenv').config();
+const Anthropic = require('@anthropic-ai/sdk');
+
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const MODEL = 'claude-opus-4-5';
+
+const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹事AIです。
+
+【性格】
+- 明るくて気が利く、でも出しゃばりすぎない
+- 理由を添えた提案をする（なぜこれを勧めるか）
+- 絵文字を自然に使う（使いすぎない）
+- タメ口で話す
+
+【制約】
+- 返答は必ず日本語
+- LINEグループなので短く読みやすく（長文NG）
+- メンバーのプライバシーに配慮する
+- 押しつけない、最後は人間が決める
+
+【役割】
+- グループの食事決定を助ける
+- 食事の被りを防ぐ提案をする
+- 投票を整理する
+- 空気を読んで自然に会話に入る`;
+
+/**
+ * メッセージが食事・飲食に関するかチェックし、食べたものを抽出
+ */
+async function extractFoodFromText(text) {
+  try {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 200,
+      system: 'あなたは食事に関するテキスト分析器です。JSONのみ返してください。',
+      messages: [{
+        role: 'user',
+        content: `以下のテキストから食べ物・飲み物の情報を抽出してください。
+
+テキスト:「${text}」
+
+以下のJSON形式で返してください（食べ物がない場合はfound: false）:
+{
+  "found": true/false,
+  "items": ["ラーメン", "餃子"],
+  "category": "ラーメン/寿司/焼肉/イタリアン/中華/その他",
+  "context": "食べた/食べたい/提案"
+}`
+      }]
+    });
+
+    const content = response.content[0].text;
+    const json = content.match(/\{[\s\S]*\}/)?.[0];
+    return json ? JSON.parse(json) : { found: false };
+  } catch (e) {
+    console.error('extractFoodFromText error:', e.message);
+    return { found: false };
+  }
+}
+
+/**
+ * グループへの食事提案を生成
+ */
+async function generateFoodSuggestion(recentMessages, foodHistory, memberCount) {
+  try {
+    // 食事履歴を整理
+    const historyText = foodHistory.length > 0
+      ? foodHistory.map(f => `・${f.food_item}（${f.category || '?'}）`).join('\n')
+      : 'まだ記録なし';
+
+    // 最近の会話
+    const chatText = recentMessages.slice(-10)
+      .map(m => `${m.display_name}: ${m.message}`)
+      .join('\n');
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 400,
+      system: KANPAI_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: `グループ（${memberCount}人）への食事提案をお願いします。
+
+【直近の食事履歴】
+${historyText}
+
+【最近の会話】
+${chatText}
+
+被りを避けた3ジャンルの提案を、理由付きで短く教えてください。`
+      }]
+    });
+
+    return response.content[0].text;
+  } catch (e) {
+    console.error('generateFoodSuggestion error:', e.message);
+    return 'ちょっと考え中...🍻 もう一回「@Kanpai おすすめ教えて」って言ってみて！';
+  }
+}
+
+/**
+ * 自由な応答を生成（メンションへの返答）
+ */
+async function generateFreeResponse(recentMessages, userMessage, displayName) {
+  try {
+    const chatHistory = recentMessages.slice(-15).map(m => ({
+      role: m.display_name === 'Kanpai' ? 'assistant' : 'user',
+      content: `${m.display_name !== 'Kanpai' ? m.display_name + ': ' : ''}${m.message}`
+    }));
+
+    // 最後がassistantの場合はuserを追加
+    chatHistory.push({
+      role: 'user',
+      content: `${displayName}: ${userMessage}`
+    });
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 300,
+      system: KANPAI_SYSTEM,
+      messages: chatHistory
+    });
+
+    return response.content[0].text;
+  } catch (e) {
+    console.error('generateFreeResponse error:', e.message);
+    return 'ちょっと考えてる🤔 もう一回言って！';
+  }
+}
+
+/**
+ * グループの空気を読んで介入メッセージを生成
+ */
+async function generateIntervention(recentMessages, interventionType) {
+  try {
+    const chatText = recentMessages.slice(-10)
+      .map(m => `${m.display_name}: ${m.message}`)
+      .join('\n');
+
+    const prompts = {
+      silence: `グループが3時間以上静かです。自然に会話を盛り上げる短いメッセージを1つ作ってください。飲食の話題を絡めてもOK。`,
+      stalemate: `みんな「どっちでもいい」「なんでもいい」と言い続けています。投票を提案する短いメッセージを作ってください。`,
+    };
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 200,
+      system: KANPAI_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: `【最近の会話】\n${chatText}\n\n${prompts[interventionType] || prompts.silence}`
+      }]
+    });
+
+    return response.content[0].text;
+  } catch (e) {
+    console.error('generateIntervention error:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 投票結果を集計してメッセージを生成
+ */
+async function generateVoteResult(vote) {
+  try {
+    const options = vote.options;
+    const results = vote.results || {};
+    const counts = {};
+
+    options.forEach((opt, i) => { counts[i] = 0; });
+    Object.values(results).forEach(idx => {
+      counts[idx] = (counts[idx] || 0) + 1;
+    });
+
+    const winner = parseInt(Object.keys(counts).reduce((a, b) =>
+      counts[a] >= counts[b] ? a : b
+    ));
+
+    const totalVotes = Object.values(counts).reduce((a, b) => a + b, 0);
+    const resultText = options.map((opt, i) =>
+      `${i === winner ? '🏆 ' : ''}${opt}：${counts[i] || 0}票`
+    ).join('\n');
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 200,
+      system: KANPAI_SYSTEM,
+      messages: [{
+        role: 'user',
+        content: `投票が終わりました！結果を発表してください。
+
+【投票内容】${vote.question}
+【結果】
+${resultText}
+【総投票数】${totalVotes}票
+
+勝者を明確にして、短く盛り上げるメッセージをお願いします。`
+      }]
+    });
+
+    return response.content[0].text;
+  } catch (e) {
+    console.error('generateVoteResult error:', e.message);
+    const options = vote.options;
+    const results = vote.results || {};
+    const counts = {};
+    options.forEach((opt, i) => { counts[i] = 0; });
+    Object.values(results).forEach(idx => { counts[idx] = (counts[idx] || 0) + 1; });
+    return `📊 結果発表！\n${options.map((opt, i) => `${opt}：${counts[i] || 0}票`).join('\n')}`;
+  }
+}
+
+module.exports = {
+  extractFoodFromText,
+  generateFoodSuggestion,
+  generateFreeResponse,
+  generateIntervention,
+  generateVoteResult,
+};
