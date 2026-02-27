@@ -288,6 +288,101 @@ ${historyText}
   }
 }
 
+/**
+ * 会話からいつ・どこ・何時を検出して能動的アプローチ判断
+ * @returns {{ shouldApproach: bool, when, where, time, confidence }}
+ */
+function detectPlanContext(messages) {
+  const recentText = messages.slice(-8).map(m => m.message).join('\n');
+
+  // いつ
+  const whenPatterns = [
+    /今夜|今晩|今日の夜|本日/,
+    /明日|あした/,
+    /明後日|あさって/,
+    /今週末|来週末|週末/,
+    /来週/,
+    /(\d+)月(\d+)日/,
+    /(月|火|水|木|金|土|日)曜/,
+    /今度|次回|そのうち/,
+  ];
+  // どこ
+  const wherePatterns = [
+    /渋谷|新宿|六本木|銀座|池袋|品川|恵比寿|中目黒|表参道|赤坂/,
+    /梅田|難波|心斎橋|天王寺|博多|天神|横浜|吉祥寺|下北沢/,
+    /名古屋|京都|神戸|福岡|札幌|仙台/,
+    /駅(の?周辺|近く|前)/,
+  ];
+  // 何時
+  const timePatterns = [
+    /(\d{1,2})時(半|頃|ごろ)?/,
+    /(\d{1,2}):(\d{2})/,
+    /ランチ|昼|夜|ディナー|夕食|夕ごはん/,
+    /夕方|夜中|深夜|早め|遅め/,
+  ];
+
+  const whenMatch = whenPatterns.find(p => p.test(recentText));
+  const whereMatch = wherePatterns.find(p => p.test(recentText));
+  const timeMatch = timePatterns.find(p => p.test(recentText));
+
+  const matched = [whenMatch, whereMatch, timeMatch].filter(Boolean).length;
+
+  // 2つ以上一致したら能動的アプローチ
+  const shouldApproach = matched >= 2;
+
+  // 既にKanpaiが最近発言していたらスキップ（連投防止）
+  const recentBotMsg = messages.slice(-5).find(m => m.display_name === 'Kanpai');
+  if (recentBotMsg) return { shouldApproach: false };
+
+  return {
+    shouldApproach,
+    confidence: matched,
+    when: whenMatch ? recentText.match(whenMatch)?.[0] : null,
+    where: whereMatch ? recentText.match(whereMatch)?.[0] : null,
+    time: timeMatch ? recentText.match(timeMatch)?.[0] : null,
+  };
+}
+
+/**
+ * プラン文脈を検出した際の能動的アプローチメッセージを生成
+ */
+async function generateProactiveApproach(context, recentMessages) {
+  try {
+    const chatText = recentMessages.slice(-6)
+      .map(m => `${m.display_name}: ${m.message}`).join('\n');
+
+    const contextParts = [
+      context.when && `いつ: ${context.when}`,
+      context.where && `どこ: ${context.where}`,
+      context.time && `何時: ${context.time}`,
+    ].filter(Boolean).join('、');
+
+    const response = await client.chat.completions.create({
+      model: MODEL,
+      max_tokens: 150,
+      messages: [
+        { role: 'system', content: KANPAI_SYSTEM },
+        {
+          role: 'user',
+          content: `会話から「${contextParts}」という情報が出てきた。
+幹事として自然に割り込んで、お店決めを手伝う短いメッセージを1つ作って。
+
+【最近の会話】
+${chatText}
+
+押しつけがましくなく、「じゃあお店どうする？」くらいの自然な感じで。
+一言〜二言で。絵文字1個まで。`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch (e) {
+    console.error('generateProactiveApproach error:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   extractFoodFromText,
   generateFoodSuggestion,
@@ -295,4 +390,6 @@ module.exports = {
   generateIntervention,
   generateVoteResult,
   generateDMBasedSuggestion,
+  detectPlanContext,
+  generateProactiveApproach,
 };

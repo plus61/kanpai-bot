@@ -234,6 +234,22 @@ async function handleEvent(event) {
           replyToken: event.replyToken,
           messages: [{ type: 'text', text: `${item}、記録したよ📝 次の提案に活かすね！` }]
         });
+        return;
+      }
+
+      // 能動的アプローチ: いつ・どこ・何時が揃ったら自然に割り込む
+      const recentMsgs = await memory.getRecentMessages(groupId, 8);
+      const planCtx = brain.detectPlanContext(recentMsgs);
+      if (planCtx.shouldApproach) {
+        const approachMsg = await brain.generateProactiveApproach(planCtx, recentMsgs);
+        if (approachMsg) {
+          // replyTokenで返す（pushMessageのクールダウン回避）
+          await lineClient.replyMessage({
+            replyToken: event.replyToken,
+            messages: [{ type: 'text', text: approachMsg }]
+          });
+          await memory.updateLastBotMessage(groupId);
+        }
       }
 
     } else if (event.type === 'join') {

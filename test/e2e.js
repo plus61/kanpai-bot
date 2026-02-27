@@ -203,7 +203,23 @@ async function runTests() {
     assert(res.status === 200);
   });
 
-  // 11. Cron エンドポイント（認証なしは401）
+  // 11. 能動的アプローチ（いつ+どこ）
+  console.log('\n■ Proactive');
+  await test('when+where detected → 200 (proactive approach)', async () => {
+    const res = await post('/webhook', {
+      events: [makeTextEvent('明日渋谷に集まろうよ')]
+    });
+    assert(res.status === 200);
+  });
+
+  await test('when+time detected → 200', async () => {
+    const res = await post('/webhook', {
+      events: [makeTextEvent('今夜7時に集合ね')]
+    });
+    assert(res.status === 200);
+  });
+
+  // 12. Cron エンドポイント（認証なしは401）
   console.log('\n■ Cron');
   await test('GET /cron/dm-timeout without auth → 401', async () => {
     const res = await new Promise((resolve) => {
