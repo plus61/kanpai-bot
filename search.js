@@ -22,7 +22,7 @@ const PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY;
 const HOTPEPPER_GENRE = {
   '1': 'G004',  // 和食
   '2': 'G005',  // 洋食
-  '3': 'G007',  // 中華
+  '3': 'G013',  // ラーメン（G007=中華より精度高）
   '4': 'G008',  // 焼肉・ホルモン
   '5': 'G001',  // 居酒屋（なんでも）
 };
@@ -129,13 +129,13 @@ async function searchHotpepper(genre, budget, area, limit = 3) {
     const budgetCode = HOTPEPPER_BUDGET[budget] || 'd006';
     const keyword = encodeURIComponent(getAreaKeyword(area));
 
+    // ジャンルコードで絞り込み（keywordにジャンル名を混ぜると件数0になりやすい）
     const url = `https://webservice.recruit.co.jp/hotpepper/gourmet/v1/` +
       `?key=${HOTPEPPER_KEY}` +
       `&keyword=${keyword}` +
       `&genre=${genreCode}` +
-      `&budget=${budgetCode}` +
       `&count=${limit}` +
-      `&order=4` +  // おすすめ順
+      `&order=4` +
       `&format=json`;
 
     const data = await httpsGet(url);

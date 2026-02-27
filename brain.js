@@ -317,6 +317,8 @@ function detectPlanContext(messages) {
     /渋谷|新宿|六本木|銀座|池袋|品川|恵比寿|中目黒|表参道|赤坂/,
     /梅田|難波|心斎橋|天王寺|博多|天神|横浜|吉祥寺|下北沢/,
     /名古屋|京都|神戸|福岡|札幌|仙台/,
+    /中野|高円寺|三軒茶屋|自由が丘|目黒|五反田|大崎|浜松町/,
+    /新橋|有楽町|神田|上野|浅草|錦糸町|武蔵小杉|二子玉川/,
     /駅(の?周辺|近く|前)/,
   ];
   // 何時
@@ -327,13 +329,20 @@ function detectPlanContext(messages) {
     /夕方|夜中|深夜|早め|遅め/,
   ];
 
+  // 食べ物・ジャンルも検出シグナルに加える
+  const foodPatterns = [
+    /ラーメン|焼肉|寿司|カレー|パスタ|中華|イタリアン|焼き鳥|居酒屋|うどん|蕎麦|ピザ|ステーキ|天ぷら/,
+    /ご飯|飯|めし|食事|ランチ|ディナー|夜ごはん|昼ごはん/,
+  ];
+
   const whenMatch = whenPatterns.find(p => p.test(recentText));
   const whereMatch = wherePatterns.find(p => p.test(recentText));
   const timeMatch = timePatterns.find(p => p.test(recentText));
+  const foodMatch = foodPatterns.find(p => p.test(recentText));
 
-  const matched = [whenMatch, whereMatch, timeMatch].filter(Boolean).length;
+  const matched = [whenMatch, whereMatch, timeMatch, foodMatch].filter(Boolean).length;
 
-  // 2つ以上一致したら能動的アプローチ
+  // 2つ以上一致したら能動的アプローチ（where+food だけでもOK）
   const shouldApproach = matched >= 2;
 
   // 既にKanpaiが最近発言していたらスキップ（連投防止）
@@ -420,4 +429,5 @@ module.exports = {
   generateDMBasedSuggestion,
   detectPlanContext,
   generateProactiveApproach,
+  guessGenreFromText,
 };
