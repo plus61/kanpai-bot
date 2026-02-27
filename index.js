@@ -57,14 +57,16 @@ app.post('/webhook',
     });
   },
   async (req, res) => {
-    res.status(200).json({ status: 'ok' });
     try {
       const events = req.body.events || [];
       console.log('[webhook] received events:', events.length);
+      // イベント処理をレスポンス送信前に完了させる（Vercelサーバーレス対応）
       await Promise.all(events.map(handleEvent));
     } catch (e) {
-      console.error('[webhook] handler error:', e.message);
+      console.error('[webhook] handler error:', e.message, e.stack);
     }
+    // 処理完了後にレスポンスを返す
+    res.status(200).json({ status: 'ok' });
   }
 );
 
