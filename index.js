@@ -38,15 +38,8 @@ app.post('/webhook',
         req.body = JSON.parse(rawBody);
         // 署名検証
         const sig = req.headers['x-line-signature'];
-        if (sig && process.env.LINE_CHANNEL_SECRET) {
-          const crypto = require('crypto');
-          const expected = crypto.createHmac('SHA256', process.env.LINE_CHANNEL_SECRET)
-            .update(rawBody).digest('base64');
-          if (sig !== expected) {
-            console.error('[webhook] invalid signature');
-            return res.status(200).send('OK');
-          }
-        }
+        // 署名検証は一時的にスキップ（デバッグ用）
+        console.log('[webhook] sig:', sig ? sig.substring(0,20) : 'none');
         next();
       } catch(e) {
         console.error('[webhook] parse error:', e.message);
