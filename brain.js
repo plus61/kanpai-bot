@@ -298,7 +298,8 @@ ${historyText}
  * @returns {{ shouldApproach: bool, when, where, time, confidence }}
  */
 function detectPlanContext(messages) {
-  const recentText = messages.slice(-8).map(m => m.message).join('\n');
+  // 直近3メッセージのみ見る（古いコンテキストの混入を防ぐ）
+  const recentText = messages.slice(-3).map(m => m.message).join('\n');
 
   // いつ
   const whenPatterns = [
@@ -353,11 +354,9 @@ function detectPlanContext(messages) {
  */
 async function generateProactiveApproach(context, recentMessages) {
   try {
-    // エリア・食べたいものを会話から抽出してお店検索まで実行
     const area = context.where;
-    const recentText = recentMessages.slice(-8).map(m => m.message).join(' ');
-
-    // ジャンルを会話から推定
+    // 直近3メッセージのみからジャンル推定（古い文脈を引きずらない）
+    const recentText = recentMessages.slice(-3).map(m => m.message).join(' ');
     const genreGuess = guessGenreFromText(recentText);
 
     // お店検索（エリアが判明している場合）
@@ -380,15 +379,15 @@ async function generateProactiveApproach(context, recentMessages) {
 
     const response = await client.chat.completions.create({
       model: MODEL,
-      max_tokens: 80,
+      max_tokens: 60,
       messages: [
         { role: 'system', content: KANPAI_SYSTEM },
         {
           role: 'user',
           content: `会話から「${contextParts}」が出てきた。
-一言だけ自然に割り込んで。「みんなに聞いて」って言えばこっそり希望を集めると教えて。絵文字1個。markdown禁止。
+一言だけ自然に割り込む。必ず会話から読み取った情報だけ使う。推測や捏造禁止。markdown禁止。絵文字1個以内。
 
-【最近の会話】\n${chatText}`
+【直近の会話】\n${chatText}`
         }
       ]
     });
@@ -404,12 +403,12 @@ async function generateProactiveApproach(context, recentMessages) {
  * テキストからジャンルコードを推定
  */
 function guessGenreFromText(text) {
-  if (/焼肉|ホルモン|BBQ|バーベキュー/.test(text)) return '4';
-  if (/中華|ラーメン|餃子|チャーハン|担々麺/.test(text)) return '3';
-  if (/イタリアン|パスタ|ピザ|フレンチ|洋食/.test(text)) return '2';
-  if (/寿司|天ぷら|蕎麦|うどん|和食|居酒屋/.test(text)) return '1';
-  if (/カレー|インド|エスニック|タイ/.test(text)) return '5';
-  return null; // 判断不能
+  if (/焼肉|ホルモン|BBQ|バーベキュー|焼き肉/.test(text)) return '4';
+  if (/ラーメン|らーめん|拉麺|中華|餃子|チャーハン|担々麺|つけ麺/.test(text)) return '3';
+  if (/イタリアン|パスタ|ピザ|フレンチ|洋食|ステーキ|ハンバーグ/.test(text)) return '2';
+  if (/寿司|すし|天ぷら|蕎麦|うどん|和食|割烹|刺身/.test(text)) return '1';
+  if (/カレー|インド|エスニック|タイ|居酒屋|飲み/.test(text)) return '5';
+  return null;
 }
 
 module.exports = {
