@@ -8,6 +8,7 @@ const line = require('@line/bot-sdk');
 const memory = require('./memory');
 const brain = require('./brain');
 const kanji = require('./kanji');
+const collector = require('./collector');
 
 const app = express();
 
@@ -22,6 +23,7 @@ const lineClient = new line.messagingApi.MessagingApiClient({
 
 // 幹事エンジンにLINEクライアントを渡す
 kanji.setLineClient(lineClient);
+collector.setLineClient(lineClient);
 
 // cronジョブ開始
 kanji.startCron();
@@ -92,6 +94,12 @@ async function handleEvent(event) {
     if (event.type === 'message' && event.message.type === 'text') {
       const text = event.message.text;
 
+      // 個人DM（1対1）の場合 → DM収集セッションへルーティング
+      if (!isGroup) {
+        await handleDMResponse(event, userId, text);
+        return;
+      }
+
       // 送信者名を取得（エラー時はデフォルト）
       let displayName = 'メンバー';
       try {
@@ -137,6 +145,15 @@ async function handleEvent(event) {
         return;
       }
 
+      // 個別DM収集トリガー（「本音で決めよう」「みんなに聞いて」など）
+      const dmTriggers = ['本音で', 'みんなに聞いて', 'こっそり聞いて', '個別に聞いて', 'みんなの希望'];
+      const hasDMTrigger = dmTriggers.some(t => text.includes(t));
+
+      if (hasDMTrigger) {
+        await handleDMCollection(event, groupId, userId);
+        return;
+      }
+
       // 食事提案のトリガーワード（広めに設定）
       const foodTriggers = [
         '何食べる', 'なに食べる', 'どこ行く', 'ご飯', '飯どこ',
@@ -178,6 +195,117 @@ async function handleEvent(event) {
     }
   } catch (e) {
     console.error('handleEvent error:', e.message);
+  }
+}
+
+/**
+ * 個別DM収集を開始
+ */
+async function handleDMCollection(event, groupId, triggeredBy) {
+  try {
+    // グループメンバーを取得
+    const { data: members } = await require('@supabase/supabase-js')
+      .createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY)
+      .from('group_members')
+      .select('line_user_id')
+      .eq('group_id', groupId);
+
+    const memberIds = (members || []).map(m => m.line_user_id).filter(id => id !== triggeredBy);
+
+    // グループに通知
+    await lineClient.replyMessage({
+      replyToken: event.replyToken,
+      messages: [{ type: 'text', text: `みんなに個別でこっそり聞くね🤫\n\nKanpaiを友達追加してない人は先に追加して！\n\n返答が集まったら提案するよ✨` }]
+    });
+
+    // セッション作成
+    const allMemberIds = [...memberIds, triggeredBy];
+    const session = await collector.startCollection(groupId, triggeredBy, allMemberIds);
+    if (!session) return;
+
+    // 全メンバーにDMを送信
+    const result = await collector.sendDMsToMembers(allMemberIds, groupId, session.id);
+    console.log(`[dmCollection] sent: ${result.sent}, failed: ${result.failed.length}`);
+
+    // 5分後に自動集計（タイムアウト処理はkanji.jsのcronで対応）
+  } catch (e) {
+    console.error('[handleDMCollection] error:', e.message);
+  }
+}
+
+/**
+ * 個別DM応答を処理（ステップ式質問）
+ */
+async function handleDMResponse(event, userId, text) {
+  try {
+    // アクティブなセッションを探す
+    const session = await collector.getSessionByUserId(userId);
+    if (!session) {
+      // セッションなし → 通常の1対1応答
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: [{ type: 'text', text: `グループでKanpaiを呼んでね🍻\n「みんなに聞いて」と言うと、こっそりみんなの希望を集めるよ！` }]
+      });
+      return;
+    }
+
+    const responses = session.responses || {};
+    const userResponse = responses[userId] || {};
+
+    // ステップ1: 予算収集
+    if (!userResponse.budget) {
+      const budgetMap = { '1': '2000', '2': '4000', '3': '6000', '4': '9999' };
+      if (budgetMap[text]) {
+        await collector.recordResponse(session.id, userId, { ...userResponse, budget: text });
+
+        // ステップ2: ジャンルを聞く
+        await lineClient.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: 'text', text: `了解！次に**食べたいジャンル**は？\n\n1️⃣ 和食\n2️⃣ 洋食\n3️⃣ 中華\n4️⃣ 焼肉\n5️⃣ なんでもOK\n\n数字で答えてね！` }]
+        });
+      } else {
+        await lineClient.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: 'text', text: `1〜4の数字で答えてね😊\n\n1️⃣ 〜2,000円\n2️⃣ 〜4,000円\n3️⃣ 〜6,000円\n4️⃣ 6,000円〜` }]
+        });
+      }
+      return;
+    }
+
+    // ステップ2: ジャンル収集
+    if (!userResponse.genre) {
+      const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': 'なんでも' };
+      if (genreMap[text]) {
+        await collector.recordResponse(session.id, userId, { ...userResponse, genre: text });
+
+        await lineClient.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: 'text', text: `ありがとう！回答を受け取ったよ✅\nみんなの回答が集まったらグループに提案するね🍻` }]
+        });
+
+        // 全員分揃ったか確認して集計
+        const result = await collector.checkAndAggregate(session.id);
+        if (result) {
+          await kanji.sendToGroup(session.group_id, result.summary);
+          // 食事提案も続けて送る
+          const [recentMessages, foodHistory] = await Promise.all([
+            memory.getRecentMessages(session.group_id, 10),
+            memory.getGroupFoodHistory(session.group_id, 14)
+          ]);
+          const suggestion = await brain.generateFoodSuggestion(recentMessages, foodHistory, result.answeredCount);
+          setTimeout(async () => {
+            await kanji.sendToGroup(session.group_id, suggestion);
+          }, 2000);
+        }
+      } else {
+        await lineClient.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: 'text', text: `1〜5の数字で答えてね😊\n\n1️⃣ 和食\n2️⃣ 洋食\n3️⃣ 中華\n4️⃣ 焼肉\n5️⃣ なんでもOK` }]
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[handleDMResponse] error:', e.message);
   }
 }
 

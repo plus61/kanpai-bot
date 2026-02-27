@@ -82,3 +82,23 @@ ALTER TABLE food_history DISABLE ROW LEVEL SECURITY;
 ALTER TABLE group_messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE group_states DISABLE ROW LEVEL SECURITY;
 ALTER TABLE votes DISABLE ROW LEVEL SECURITY;
+
+-- 個別DM収集セッション
+CREATE TABLE IF NOT EXISTS dm_sessions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  triggered_by TEXT NOT NULL,
+  status TEXT DEFAULT 'collecting',
+  responses JSONB DEFAULT '{}',
+  member_ids JSONB DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '5 minutes')
+);
+CREATE INDEX IF NOT EXISTS idx_dm_sessions_group ON dm_sessions(group_id, status);
+
+-- ユーザーのLINE友達追加状態
+CREATE TABLE IF NOT EXISTS user_follows (
+  line_user_id TEXT PRIMARY KEY,
+  is_following BOOLEAN DEFAULT true,
+  last_seen TIMESTAMPTZ DEFAULT NOW()
+);
