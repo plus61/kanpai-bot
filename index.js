@@ -25,8 +25,10 @@ const lineClient = new line.messagingApi.MessagingApiClient({
 kanji.setLineClient(lineClient);
 collector.setLineClient(lineClient);
 
-// cronジョブ開始
-kanji.startCron();
+// cronジョブ開始（ローカル開発時のみ有効、Vercelでは /cron/* エンドポイントを使用）
+if (process.env.NODE_ENV !== 'production') {
+  kanji.startCron();
+}
 
 /**
  * LINE Webhookエンドポイント
@@ -77,6 +79,55 @@ app.post('/webhook',
  */
 app.get('/', (req, res) => {
   res.json({ status: 'Kanpai Bot is running 🍻', timestamp: new Date().toISOString() });
+});
+
+/**
+ * Vercel Cron: DMセッションタイムアウト（毎分）
+ */
+app.get('/cron/dm-timeout', async (req, res) => {
+  // Vercel Cron認証
+  if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    await kanji.checkDMTimeout();
+    res.json({ ok: true, job: 'dm-timeout', ts: new Date().toISOString() });
+  } catch (e) {
+    console.error('[cron/dm-timeout]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Vercel Cron: 投票タイムアウト（15分ごと）
+ */
+app.get('/cron/vote-timeout', async (req, res) => {
+  if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    await kanji.checkVoteTimeout();
+    res.json({ ok: true, job: 'vote-timeout', ts: new Date().toISOString() });
+  } catch (e) {
+    console.error('[cron/vote-timeout]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Vercel Cron: グループ監視（30分ごと）
+ */
+app.get('/cron/monitor', async (req, res) => {
+  if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    await kanji.monitorGroups();
+    res.json({ ok: true, job: 'monitor', ts: new Date().toISOString() });
+  } catch (e) {
+    console.error('[cron/monitor]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 /**

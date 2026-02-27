@@ -245,4 +245,7 @@ module.exports = {
   sendToGroupForce,
   startCron,
   detectStalemate,
+  checkDMTimeout: checkDMSessionTimeout,
+  checkVoteTimeout,
+  monitorGroups,
 };

@@ -11,5 +11,19 @@
       "src": "/(.*)",
       "dest": "/index.js"
     }
+  ],
+  "crons": [
+    {
+      "path": "/cron/dm-timeout",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/cron/vote-timeout",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/cron/monitor",
+      "schedule": "*/30 * * * *"
+    }
   ]
 }
