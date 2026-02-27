@@ -38,8 +38,17 @@ app.post('/webhook',
         req.body = JSON.parse(rawBody);
         // 署名検証
         const sig = req.headers['x-line-signature'];
-        // 署名検証は一時的にスキップ（デバッグ用）
-        console.log('[webhook] sig:', sig ? sig.substring(0,20) : 'none');
+        // 署名検証（ログのみ、MVPでは通過させる）
+        if (sig && process.env.LINE_CHANNEL_SECRET) {
+          const crypto = require('crypto');
+          const expected = crypto.createHmac('SHA256', process.env.LINE_CHANNEL_SECRET)
+            .update(rawBody).digest('base64');
+          if (sig !== expected) {
+            console.warn('[webhook] signature mismatch (continuing for MVP)');
+          } else {
+            console.log('[webhook] signature OK');
+          }
+        }
         next();
       } catch(e) {
         console.error('[webhook] parse error:', e.message);
