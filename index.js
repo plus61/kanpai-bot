@@ -130,7 +130,7 @@ async function handleEvent(event) {
       }
 
       // 投票への返答チェック（「1」「2」「3」）
-      const voteMatch = text.match(/^[1-3]$/);
+      const voteMatch = text.match(/^[1-5]$/);
       if (voteMatch) {
         await handleVoteResponse(event, groupId, userId, parseInt(text) - 1);
         return;
@@ -145,8 +145,12 @@ async function handleEvent(event) {
         return;
       }
 
-      // 個別DM収集トリガー（「本音で決めよう」「みんなに聞いて」など）
-      const dmTriggers = ['本音で', 'みんなに聞いて', 'こっそり聞いて', '個別に聞いて', 'みんなの希望'];
+      // 個別DM収集トリガー（食事トリガーより先にチェック）
+      const dmTriggers = [
+        '本音で', 'みんなに聞いて', 'こっそり聞いて', '個別に聞いて', 'みんなの希望',
+        'みんなに聞いて', '今夜どこ', '今日どこ', 'どこ行く？', 'どこにする？',
+        '希望聞いて', 'こっそり教えて', 'みんなの意見'
+      ];
       const hasDMTrigger = dmTriggers.some(t => text.includes(t));
 
       if (hasDMTrigger) {
@@ -154,7 +158,7 @@ async function handleEvent(event) {
         return;
       }
 
-      // 食事提案のトリガーワード（広めに設定）
+      // 食事提案のトリガーワード
       const foodTriggers = [
         '何食べる', 'なに食べる', 'どこ行く', 'ご飯', '飯どこ',
         'なに食べ', 'お腹すいた', 'おすすめ', 'オススメ', 'おすすめある',
@@ -203,23 +207,32 @@ async function handleEvent(event) {
  */
 async function handleDMCollection(event, groupId, triggeredBy) {
   try {
-    // グループメンバーを取得
-    const { data: members } = await require('@supabase/supabase-js')
-      .createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY)
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
+    );
+
+    // グループメンバーを取得（過去に発言したメンバー）
+    const { data: members } = await supabase
       .from('group_members')
       .select('line_user_id')
       .eq('group_id', groupId);
 
     const memberIds = (members || []).map(m => m.line_user_id).filter(id => id !== triggeredBy);
+    const allMemberIds = memberIds.length > 0 ? [...memberIds, triggeredBy] : [triggeredBy];
 
     // グループに通知
+    const memberCountText = allMemberIds.length > 1
+      ? `${allMemberIds.length}人`
+      : 'あなた';
+
     await lineClient.replyMessage({
       replyToken: event.replyToken,
-      messages: [{ type: 'text', text: `みんなに個別でこっそり聞くね🤫\n\nKanpaiを友達追加してない人は先に追加して！\n\n返答が集まったら提案するよ✨` }]
+      messages: [{ type: 'text', text: `${memberCountText}にこっそり聞くね🤫\n\nKanpaiを友達追加してない人は先に追加してね！\n\n3分後または全員回答後に提案するよ✨` }]
     });
 
-    // セッション作成
-    const allMemberIds = [...memberIds, triggeredBy];
+    // セッション作成（3分タイムアウト）
     const session = await collector.startCollection(groupId, triggeredBy, allMemberIds);
     if (!session) return;
 
@@ -227,7 +240,12 @@ async function handleDMCollection(event, groupId, triggeredBy) {
     const result = await collector.sendDMsToMembers(allMemberIds, groupId, session.id);
     console.log(`[dmCollection] sent: ${result.sent}, failed: ${result.failed.length}`);
 
-    // 5分後に自動集計（タイムアウト処理はkanji.jsのcronで対応）
+    if (result.failed.length > 0 && result.sent === 0) {
+      // 全員送信失敗 → グループに通知してフォールバック
+      await kanji.sendToGroupForce(groupId,
+        `ごめん、DMが届かなかった😅\nKanpaiを友達追加してからもう一度「みんなに聞いて」って言って！`
+      );
+    }
   } catch (e) {
     console.error('[handleDMCollection] error:', e.message);
   }
@@ -286,15 +304,17 @@ async function handleDMResponse(event, userId, text) {
         // 全員分揃ったか確認して集計
         const result = await collector.checkAndAggregate(session.id);
         if (result) {
-          await kanji.sendToGroup(session.group_id, result.summary);
-          // 食事提案も続けて送る
+          await kanji.sendToGroupForce(session.group_id, result.summary);
+          // 食事提案も続けて送る（好みベース）
           const [recentMessages, foodHistory] = await Promise.all([
             memory.getRecentMessages(session.group_id, 10),
             memory.getGroupFoodHistory(session.group_id, 14)
           ]);
-          const suggestion = await brain.generateFoodSuggestion(recentMessages, foodHistory, result.answeredCount);
+          const suggestion = await brain.generateDMBasedSuggestion(
+            recentMessages, foodHistory, result
+          );
           setTimeout(async () => {
-            await kanji.sendToGroup(session.group_id, suggestion);
+            await kanji.sendToGroupForce(session.group_id, suggestion);
           }, 2000);
         }
       } else {

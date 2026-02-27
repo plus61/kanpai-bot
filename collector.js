@@ -26,7 +26,7 @@ async function startCollection(groupId, triggeredBy, memberIds) {
         member_ids: memberIds,
         responses: {},
         status: 'collecting',
-        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        expires_at: new Date(Date.now() + 3 * 60 * 1000).toISOString()
       })
       .select().single();
     return data;
@@ -116,7 +116,7 @@ async function sendDMsToMembers(memberIds, groupId, sessionId) {
   if (!lineClient) return { sent: 0, failed: [] };
 
   const questions = [
-    `こっそり教えて🤫\n\n今夜の食事の希望を聞くよ！\n\n**予算は？**\n1️⃣ 〜2,000円\n2️⃣ 〜4,000円\n3️⃣ 〜6,000円\n4️⃣ 6,000円〜\n\n数字で答えてね！（例：2）`
+    `こっそり教えて🤫\n\n今夜の食事の希望を聞くよ！\n\n予算は？\n\n1️⃣ 〜2,000円\n2️⃣ 〜4,000円\n3️⃣ 〜6,000円\n4️⃣ 6,000円〜\n\n数字で答えてね！`
   ];
 
   let sent = 0;

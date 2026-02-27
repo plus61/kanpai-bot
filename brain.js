@@ -225,10 +225,55 @@ ${resultText}
   }
 }
 
+/**
+ * DM収集結果をもとに食事提案を生成
+ */
+async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult) {
+  try {
+    const budgetMap = { '1': '〜2,000円', '2': '〜4,000円', '3': '〜6,000円', '4': '6,000円〜' };
+    const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': 'なんでも' };
+
+    const budgetText = budgetMap[dmResult.budget] || '未定';
+    const genreText = genreMap[dmResult.genre] || 'なんでも';
+
+    const historyText = foodHistory.length > 0
+      ? foodHistory.slice(0, 5).map(f => `・${f.food_item}`).join('\n')
+      : 'まだ記録なし';
+
+    const response = await client.chat.completions.create({
+      model: MODEL,
+      max_tokens: 350,
+      messages: [
+        { role: 'system', content: KANPAI_SYSTEM },
+        {
+          role: 'user',
+          content: `みんなの本音を集めたよ！この条件でお店を提案して。
+
+条件：
+- 予算：${budgetText}
+- ジャンル：${genreText}
+- 回答者：${dmResult.answeredCount}人
+
+最近食べたもの（被りNG）：
+${historyText}
+
+具体的なお店の種類・特徴を2〜3個提案して。短く読みやすく！`
+        }
+      ]
+    });
+
+    return response.choices[0].message.content;
+  } catch (e) {
+    console.error('generateDMBasedSuggestion error:', e.message);
+    return '条件に合うお店を探してるよ🔍 もう少し待って！';
+  }
+}
+
 module.exports = {
   extractFoodFromText,
   generateFoodSuggestion,
   generateFreeResponse,
   generateIntervention,
   generateVoteResult,
+  generateDMBasedSuggestion,
 };

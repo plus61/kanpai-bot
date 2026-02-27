@@ -37,16 +37,27 @@ async function sendToGroup(groupId, message) {
       console.log(`[kanji] Skip - bot spoke recently in ${groupId}`);
       return;
     }
+    await sendToGroupForce(groupId, message);
+  } catch (e) {
+    console.error(`[kanji] sendToGroup error: ${e.message}`);
+  }
+}
 
+/**
+ * グループに強制送信（クールダウンを無視）
+ * DM集計結果など重要なメッセージ用
+ */
+async function sendToGroupForce(groupId, message) {
+  if (!lineClient) return;
+  try {
     await lineClient.pushMessage({
       to: groupId,
       messages: [{ type: 'text', text: message }]
     });
-
     await memory.updateLastBotMessage(groupId);
-    console.log(`[kanji] Sent to ${groupId}: ${message.substring(0, 50)}...`);
+    console.log(`[kanji] Force-sent to ${groupId}: ${message.substring(0, 50)}...`);
   } catch (e) {
-    console.error(`[kanji] sendToGroup error: ${e.message}`);
+    console.error(`[kanji] sendToGroupForce error: ${e.message}`);
   }
 }
 
@@ -164,6 +175,49 @@ async function checkVoteTimeout() {
 }
 
 /**
+ * DMセッションタイムアウト処理（3〜5分で自動集計）
+ */
+async function checkDMSessionTimeout() {
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
+    );
+
+    const { data: expiredSessions } = await supabase
+      .from('dm_sessions')
+      .select('*')
+      .eq('status', 'collecting')
+      .lt('expires_at', new Date().toISOString());
+
+    if (!expiredSessions || expiredSessions.length === 0) return;
+
+    const collector = require('./collector');
+    const brain = require('./brain');
+    const memory = require('./memory');
+
+    for (const session of expiredSessions) {
+      console.log(`[kanji] DM session timeout: ${session.id}`);
+      const result = await collector.checkAndAggregate(session.id);
+      if (result) {
+        await sendToGroupForce(session.group_id, result.summary);
+        const [recentMessages, foodHistory] = await Promise.all([
+          memory.getRecentMessages(session.group_id, 10),
+          memory.getGroupFoodHistory(session.group_id, 14)
+        ]);
+        const suggestion = await brain.generateDMBasedSuggestion(recentMessages, foodHistory, result);
+        setTimeout(async () => {
+          await sendToGroupForce(session.group_id, suggestion);
+        }, 2000);
+      }
+    }
+  } catch (e) {
+    console.error('[kanji] checkDMSessionTimeout error:', e.message);
+  }
+}
+
+/**
  * cronジョブを開始
  */
 function startCron() {
@@ -177,12 +231,18 @@ function startCron() {
     checkVoteTimeout();
   });
 
+  // 1分ごとにDMセッションタイムアウトチェック
+  cron.schedule('* * * * *', () => {
+    checkDMSessionTimeout();
+  });
+
   console.log('[kanji] Cron jobs started ✅');
 }
 
 module.exports = {
   setLineClient,
   sendToGroup,
+  sendToGroupForce,
   startCron,
   detectStalemate,
 };
