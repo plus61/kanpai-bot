@@ -267,3 +267,9 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
+// デバッグ：全リクエストをログ（一時的）
+app.post('/debug', express.json(), (req, res) => {
+  console.log('[debug] body:', JSON.stringify(req.body).substring(0, 200));
+  res.json({ received: true, events: (req.body.events || []).length });
+});
