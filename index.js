@@ -81,6 +81,7 @@ app.get('/', (req, res) => {
  * イベントハンドラ
  */
 async function handleEvent(event) {
+  console.log('[event] type:', event.type, 'source:', JSON.stringify(event.source));
   try {
     // グループ or ルームのみ処理（個人DMは除外）
     const source = event.source;
@@ -146,13 +147,19 @@ async function handleEvent(event) {
 
     } else if (event.type === 'join') {
       // グループ参加時のあいさつ
-      await lineClient.replyMessage({
-        replyToken: event.replyToken,
-        messages: [{
-          type: 'text',
-          text: `乾杯🍻 Kanpaiです！\n\nグループのみんなの食事を記録して、被りなしの提案をする幹事AIです。\n\n使い方は簡単：\n・「ラーメン食べた」→ 記録します\n・「@Kanpai おすすめ教えて」→ 提案します\n・「@Kanpai 焼肉か中華か投票して」→ 投票します\n\nよろしく！🎉`
-        }]
-      });
+      console.log('[join] groupId:', event.source.groupId);
+      try {
+        await lineClient.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{
+            type: 'text',
+            text: `乾杯🍻 Kanpaiです！\n\nグループのみんなの食事を記録して、被りなしの提案をする幹事AIです。\n\n使い方は簡単：\n・「ラーメン食べた」→ 記録します\n・「@Kanpai おすすめ教えて」→ 提案します\n・「@Kanpai 焼肉か中華か投票して」→ 投票します\n\nよろしく！🎉`
+          }]
+        });
+        console.log('[join] greeting sent');
+      } catch(e) {
+        console.error('[join] replyMessage error:', e.message);
+      }
     }
   } catch (e) {
     console.error('handleEvent error:', e.message);
