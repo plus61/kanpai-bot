@@ -17,6 +17,11 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 - 絵文字を自然に使う（使いすぎない）
 - タメ口で話す
 
+【絶対禁止】
+- **太字** や __下線__ などのmarkdown記法は絶対に使わない（LINEでは文字化けする）
+- 「1. 2. 3.」の番号リストより「1️⃣ 2️⃣ 3️⃣」を使う
+- 長い返答（5行以上）は避ける
+
 【制約】
 - 返答は必ず日本語
 - LINEグループなので短く読みやすく（長文NG）
@@ -344,34 +349,46 @@ function detectPlanContext(messages) {
 }
 
 /**
- * プラン文脈を検出した際の能動的アプローチメッセージを生成
+ * プラン文脈を検出した際の能動的アプローチ（お店検索まで一気にやる）
  */
 async function generateProactiveApproach(context, recentMessages) {
   try {
+    // エリア・食べたいものを会話から抽出してお店検索まで実行
+    const area = context.where;
+    const recentText = recentMessages.slice(-8).map(m => m.message).join(' ');
+
+    // ジャンルを会話から推定
+    const genreGuess = guessGenreFromText(recentText);
+
+    // お店検索（エリアが判明している場合）
+    if (area && genreGuess) {
+      const restaurants = await search.searchRestaurants(genreGuess, '2', area, 3);
+      if (restaurants && restaurants.length > 0) {
+        const formatted = search.formatRestaurants(restaurants, genreGuess, '2', area);
+        if (formatted) return formatted;
+      }
+    }
+
+    // お店が出せない場合は自然な一言で促す
     const chatText = recentMessages.slice(-6)
       .map(m => `${m.display_name}: ${m.message}`).join('\n');
-
     const contextParts = [
-      context.when && `いつ: ${context.when}`,
-      context.where && `どこ: ${context.where}`,
-      context.time && `何時: ${context.time}`,
-    ].filter(Boolean).join('、');
+      context.when && `${context.when}`,
+      context.where && `${context.where}`,
+      context.time && `${context.time}`,
+    ].filter(Boolean).join('・');
 
     const response = await client.chat.completions.create({
       model: MODEL,
-      max_tokens: 150,
+      max_tokens: 80,
       messages: [
         { role: 'system', content: KANPAI_SYSTEM },
         {
           role: 'user',
-          content: `会話から「${contextParts}」という情報が出てきた。
-幹事として自然に割り込んで、お店決めを手伝う短いメッセージを1つ作って。
+          content: `会話から「${contextParts}」が出てきた。
+一言だけ自然に割り込んで。「みんなに聞いて」って言えばこっそり希望を集めると教えて。絵文字1個。markdown禁止。
 
-【最近の会話】
-${chatText}
-
-押しつけがましくなく、「じゃあお店どうする？」くらいの自然な感じで。
-一言〜二言で。絵文字1個まで。`
+【最近の会話】\n${chatText}`
         }
       ]
     });
@@ -381,6 +398,18 @@ ${chatText}
     console.error('generateProactiveApproach error:', e.message);
     return null;
   }
+}
+
+/**
+ * テキストからジャンルコードを推定
+ */
+function guessGenreFromText(text) {
+  if (/焼肉|ホルモン|BBQ|バーベキュー/.test(text)) return '4';
+  if (/中華|ラーメン|餃子|チャーハン|担々麺/.test(text)) return '3';
+  if (/イタリアン|パスタ|ピザ|フレンチ|洋食/.test(text)) return '2';
+  if (/寿司|天ぷら|蕎麦|うどん|和食|居酒屋/.test(text)) return '1';
+  if (/カレー|インド|エスニック|タイ/.test(text)) return '5';
+  return null; // 判断不能
 }
 
 module.exports = {
