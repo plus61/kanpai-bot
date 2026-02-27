@@ -30,12 +30,25 @@ kanji.startCron();
  * LINE Webhookエンドポイント
  */
 app.post('/webhook',
-  line.middleware(lineConfig),
+  (req, res, next) => {
+    // LINE middlewareをtry/catchでラップ
+    line.middleware(lineConfig)(req, res, (err) => {
+      if (err) {
+        console.error('[webhook] middleware error:', err.message, err.stack);
+        return res.status(200).send('OK'); // LINEには必ず200を返す
+      }
+      next();
+    });
+  },
   async (req, res) => {
     res.status(200).json({ status: 'ok' });
-
-    const events = req.body.events;
-    await Promise.all(events.map(handleEvent));
+    try {
+      const events = req.body.events || [];
+      console.log('[webhook] received events:', events.length);
+      await Promise.all(events.map(handleEvent));
+    } catch (e) {
+      console.error('[webhook] handler error:', e.message);
+    }
   }
 );
 
