@@ -137,12 +137,27 @@ async function handleEvent(event) {
         return;
       }
 
-      // 食事提案のトリガーワード
-      const foodTriggers = ['何食べる', 'どこ行く', 'ご飯', '飯どこ', 'なに食べ', 'お腹すいた'];
+      // 食事提案のトリガーワード（広めに設定）
+      const foodTriggers = [
+        '何食べる', 'なに食べる', 'どこ行く', 'ご飯', '飯どこ',
+        'なに食べ', 'お腹すいた', 'おすすめ', 'オススメ', 'おすすめある',
+        '何がいい', 'どこがいい', 'どこ食べ', '飯どうする', 'めし',
+        'ランチ', 'ディナー', '夜ごはん', '昼ごはん'
+      ];
       const hasFoodTrigger = foodTriggers.some(t => text.includes(t));
 
       if (hasFoodTrigger) {
         await handleFoodSuggestion(event, groupId);
+        return;
+      }
+
+      // 食事記録時に確認メッセージを送る
+      if (foodData.found && foodData.context === '食べた' && (foodData.items || []).length > 0) {
+        const item = foodData.items[0];
+        await lineClient.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: 'text', text: `${item}、記録したよ📝 次の提案に活かすね！` }]
+        });
       }
 
     } else if (event.type === 'join') {
