@@ -203,6 +203,18 @@ async function runTests() {
     assert(res.status === 200);
   });
 
+  // 11. Cron エンドポイント（認証なしは401）
+  console.log('\n■ Cron');
+  await test('GET /cron/dm-timeout without auth → 401', async () => {
+    const res = await new Promise((resolve) => {
+      https.get(BASE_URL + '/cron/dm-timeout', (r) => {
+        let d = ''; r.on('data', c => d += c);
+        r.on('end', () => resolve({ status: r.statusCode }));
+      });
+    });
+    assert(res.status === 401, `status should be 401, got ${res.status}`);
+  });
+
   // 結果
   console.log(`\n${'─'.repeat(40)}`);
   const total = passed + failed;

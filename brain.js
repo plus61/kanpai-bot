@@ -4,6 +4,7 @@
  */
 require('dotenv').config();
 const OpenAI = require('openai');
+const search = require('./search');
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = 'gpt-4o-mini';
@@ -226,7 +227,7 @@ ${resultText}
 }
 
 /**
- * DM収集結果をもとに食事提案を生成
+ * DM収集結果をもとに食事提案を生成（Google Places連携）
  */
 async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult) {
   try {
@@ -236,6 +237,23 @@ async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult) 
     const budgetText = budgetMap[dmResult.budget] || '未定';
     const genreText = genreMap[dmResult.genre] || 'なんでも';
 
+    // エリアを会話から推定
+    const area = search.extractArea(recentMessages);
+
+    // Google Placesでお店検索
+    const restaurants = await search.searchRestaurants(
+      dmResult.genre, dmResult.budget, area, 3
+    );
+
+    // お店が見つかった場合はリスト表示
+    if (restaurants.length > 0) {
+      const formatted = search.formatRestaurants(
+        restaurants, dmResult.genre, dmResult.budget, area
+      );
+      if (formatted) return formatted;
+    }
+
+    // フォールバック: AIによる提案
     const historyText = foodHistory.length > 0
       ? foodHistory.slice(0, 5).map(f => `・${f.food_item}`).join('\n')
       : 'まだ記録なし';
@@ -252,6 +270,7 @@ async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult) 
 条件：
 - 予算：${budgetText}
 - ジャンル：${genreText}
+- エリア：${area || '指定なし'}
 - 回答者：${dmResult.answeredCount}人
 
 最近食べたもの（被りNG）：
