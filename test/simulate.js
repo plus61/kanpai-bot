@@ -203,7 +203,7 @@ async function runProactiveQuality() {
     const context = brain.detectPlanContext(msgs);
     const response = await brain.generateProactiveApproach(context, msgs);
     const hasMD = /\*\*|__|\[.*\]\(/.test(response || '');
-    const isShort = (response || '').length < 200;
+    const isShort = (response || '').length < 600; // お店リスト含む場合は長め
     const notEmpty = !!response;
 
     console.log(`\n  [${p.name}]`);
