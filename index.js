@@ -66,6 +66,8 @@ app.post('/webhook',
       console.log('[webhook] received events:', events.length);
       // イベント処理をレスポンス送信前に完了させる（Vercelサーバーレス対応）
       await Promise.all(events.map(handleEvent));
+      // 期限切れセッションを遅延チェック（cron不要でサーバーレス対応）
+      kanji.checkDMTimeout().catch(e => console.error('[lazy-check]', e.message));
     } catch (e) {
       console.error('[webhook] handler error:', e.message, e.stack);
     }
@@ -82,11 +84,11 @@ app.get('/', (req, res) => {
 });
 
 /**
- * Vercel Cron: DMセッションタイムアウト（毎分）
+ * Cron: DMセッションタイムアウト（外部cronサービスから毎分叩く）
  */
 app.get('/cron/dm-timeout', async (req, res) => {
-  // Vercel Cron認証
-  if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
+  const token = req.headers['authorization'] || req.query.token;
+  if (process.env.CRON_SECRET && token !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   try {
@@ -99,10 +101,11 @@ app.get('/cron/dm-timeout', async (req, res) => {
 });
 
 /**
- * Vercel Cron: 投票タイムアウト（15分ごと）
+ * Cron: 投票タイムアウト（外部cronサービスから15分ごと）
  */
 app.get('/cron/vote-timeout', async (req, res) => {
-  if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
+  const token = req.headers['authorization'] || req.query.token;
+  if (process.env.CRON_SECRET && token !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   try {
@@ -115,10 +118,11 @@ app.get('/cron/vote-timeout', async (req, res) => {
 });
 
 /**
- * Vercel Cron: グループ監視（30分ごと）
+ * Cron: グループ監視（外部cronサービスから30分ごと）
  */
 app.get('/cron/monitor', async (req, res) => {
-  if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
+  const token = req.headers['authorization'] || req.query.token;
+  if (process.env.CRON_SECRET && token !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   try {
