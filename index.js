@@ -31,13 +31,27 @@ kanji.startCron();
  */
 app.post('/webhook',
   (req, res, next) => {
-    // LINE middlewareをtry/catchでラップ
-    line.middleware(lineConfig)(req, res, (err) => {
-      if (err) {
-        console.error('[webhook] middleware error:', err.message, err.stack);
-        return res.status(200).send('OK'); // LINEには必ず200を返す
+    let rawBody = '';
+    req.on('data', chunk => { rawBody += chunk; });
+    req.on('end', () => {
+      try {
+        req.body = JSON.parse(rawBody);
+        // 署名検証
+        const sig = req.headers['x-line-signature'];
+        if (sig && process.env.LINE_CHANNEL_SECRET) {
+          const crypto = require('crypto');
+          const expected = crypto.createHmac('SHA256', process.env.LINE_CHANNEL_SECRET)
+            .update(rawBody).digest('base64');
+          if (sig !== expected) {
+            console.error('[webhook] invalid signature');
+            return res.status(200).send('OK');
+          }
+        }
+        next();
+      } catch(e) {
+        console.error('[webhook] parse error:', e.message);
+        res.status(200).send('OK');
       }
-      next();
     });
   },
   async (req, res) => {
