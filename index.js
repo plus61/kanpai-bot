@@ -9,6 +9,7 @@ const memory = require('./memory');
 const brain = require('./brain');
 const kanji = require('./kanji');
 const collector = require('./collector');
+const flex = require('./flex');
 
 const app = express();
 
@@ -243,10 +244,13 @@ async function handleEvent(event) {
       if (planCtx.shouldApproach) {
         const approachMsg = await brain.generateProactiveApproach(planCtx, recentMsgs);
         if (approachMsg) {
-          // replyTokenで返す（pushMessageのクールダウン回避）
+          // Flex or テキストを自動判別
+          const lineMsg = typeof approachMsg === 'string'
+            ? { type: 'text', text: approachMsg }
+            : approachMsg; // Flexオブジェクトそのまま
           await lineClient.replyMessage({
             replyToken: event.replyToken,
-            messages: [{ type: 'text', text: approachMsg }]
+            messages: [lineMsg]
           });
           await memory.updateLastBotMessage(groupId);
         }
@@ -385,7 +389,12 @@ async function handleDMResponse(event, userId, text) {
             recentMessages, foodHistory, result
           );
           setTimeout(async () => {
-            await kanji.sendToGroupForce(session.group_id, suggestion);
+            if (typeof suggestion === 'string') {
+              await kanji.sendToGroupForce(session.group_id, suggestion);
+            } else {
+              // Flex Message → pushMessage
+              await lineClient.pushMessage({ to: session.group_id, messages: [suggestion] });
+            }
           }, 2000);
         }
       } else {

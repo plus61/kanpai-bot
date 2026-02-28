@@ -248,17 +248,15 @@ async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult) 
     // エリアを会話から推定
     const area = search.extractArea(recentMessages);
 
-    // Google Placesでお店検索
+    // お店検索 → Flex優先
     const restaurants = await search.searchRestaurants(
       dmResult.genre, dmResult.budget, area, 3
     );
 
-    // お店が見つかった場合はリスト表示
-    if (restaurants.length > 0) {
-      const formatted = search.formatRestaurants(
-        restaurants, dmResult.genre, dmResult.budget, area
-      );
-      if (formatted) return formatted;
+    if (restaurants && restaurants.length > 0) {
+      const { buildRestaurantCarousel } = require('./flex');
+      const flexMsg = buildRestaurantCarousel(restaurants, dmResult.genre, dmResult.budget, area);
+      if (flexMsg) return flexMsg; // Flexオブジェクト返却
     }
 
     // フォールバック: AIによる提案
@@ -394,16 +392,18 @@ async function generateProactiveApproach(context, recentMessages) {
     const recentText = recentMessages.slice(-3).map(m => m.message).join(' ');
     const genreGuess = guessGenreFromText(recentText);
 
-    // お店検索（エリアが判明している場合）
+    // お店検索（エリアが判明している場合）→ Flex優先、fallbackにテキスト
     if (area && genreGuess) {
       const restaurants = await search.searchRestaurants(genreGuess, '2', area, 3);
       if (restaurants && restaurants.length > 0) {
-        const formatted = search.formatRestaurants(restaurants, genreGuess, '2', area);
-        if (formatted) return formatted;
+        // Flex Messageオブジェクトを返す（index.jsで判定してreplyMessage）
+        const { buildRestaurantCarousel } = require('./flex');
+        const flexMsg = buildRestaurantCarousel(restaurants, genreGuess, '2', area);
+        if (flexMsg) return flexMsg; // オブジェクト返却
       }
     }
 
-    // お店が出せない場合は自然な一言で促す
+    // Flex生成できない場合は自然な一言で促す
     const chatText = recentMessages.slice(-6)
       .map(m => `${m.display_name}: ${m.message}`).join('\n');
     const contextParts = [
