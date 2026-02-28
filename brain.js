@@ -314,6 +314,7 @@ function detectPlanContext(messages) {
     /(\d+)月(\d+)日/,
     /(月|火|水|木|金|土|日)曜/,
     /今度|次回|そのうち/,
+    /大人数|20人|みんなで|全員で/,  // 宴会規模もwhenシグナルに
   ];
   // どこ
   const wherePatterns = [
@@ -335,8 +336,10 @@ function detectPlanContext(messages) {
   // 食べ物・ジャンルも検出シグナルに加える
   const foodPatterns = [
     /ラーメン|焼肉|寿司|カレー|パスタ|中華|イタリアン|焼き鳥|居酒屋|うどん|蕎麦|ピザ|ステーキ|天ぷら/,
-    /ご飯|飯|めし|食事|ランチ|ディナー|夜ごはん|昼ごはん/,
+    /ご飯|飯|めし|食事|ランチ|ディナー|夜ごはん|昼ごはん|朝ごはん|モーニング/,
     /たこ焼き|もつ鍋|鍋|しゃぶしゃぶ|もんじゃ|焼き肉|飲み|飲もう|飲まない/,
+    /宴会|飲み会|送別会|歓迎会|誕生日|合コン|接待|記念日/,
+    /磯丸|鳥貴族|串カツ田中|やきとり|居酒屋|酒場|バル|バー/,
   ];
 
   const whenMatch = whenPatterns.find(p => p.test(recentText));
@@ -346,9 +349,9 @@ function detectPlanContext(messages) {
 
   const matched = [whenMatch, whereMatch, timeMatch, foodMatch].filter(Boolean).length;
 
-  // 過去形は除外（「食べた」「行った」）
-  // ※「食べたい」「行きたい」は未来形なので除外しない → 語尾を限定
-  const isPast = /食べたよ|食べたな|食べたね|行ったよ|行ったな|飲んだよ|飲んだな|でした|ました|だった|よかった/.test(recentText);
+  // 過去形・無関係トピックは「最新1メッセージ」だけで判断（前メッセージの汚染防止）
+  const latestMsg = messages[messages.length - 1]?.message || '';
+  const isPast = /食べたよ|食べたな|食べたね|行ったよ|行ったな|飲んだよ|飲んだな|でした|ました|だった|よかった|映画|ドラマ|ゲーム|仕事|会議|授業/.test(latestMsg);
 
   // 「わからん」「どうする」だけでは除外
   const isUndecided = matched < 2 || (whenMatch && !whereMatch && !foodMatch && !timeMatch);
@@ -361,10 +364,14 @@ function detectPlanContext(messages) {
   if (recentBotMsg) return { shouldApproach: false };
 
   // food×2でもapproach（エリア不明でも食べ物が重なれば発火）
-  // ただし「今夜/明日」など時間のみシグナルの場合は除外（食べ物またはエリアが必要）
-  const foodCount = messages.slice(-3).filter(m =>
-    foodPatterns.some(p => p.test(m.message))
-  ).length;
+  // food×2: 複数メッセージまたは同一メッセージに食べ物ワード複数
+  const foodCount = messages.slice(-3).reduce((count, m) => {
+    const text = m.message;
+    // 同じ単語の繰り返し（「飲み飲み飲み」）もカウント
+    const uniqueHits = foodPatterns.filter(p => p.test(text)).length;
+    const repeatBonus = /(.{1,4})\1{2,}/.test(text) && foodPatterns.some(p => p.test(text)) ? 1 : 0;
+    return count + Math.min(uniqueHits + repeatBonus, 2);
+  }, 0);
   const hasSubstance = !!(whereMatch || foodMatch || timeMatch); // when単独はNG
   const shouldApproachFinal = (shouldApproach && hasSubstance) || (foodCount >= 2 && !isPast);
 
@@ -433,9 +440,9 @@ async function generateProactiveApproach(context, recentMessages) {
 function guessGenreFromText(text) {
   if (/焼肉|ホルモン|BBQ|バーベキュー|焼き肉/.test(text)) return '4';
   if (/ラーメン|らーめん|拉麺|中華|餃子|チャーハン|担々麺|つけ麺/.test(text)) return '3';
-  if (/イタリアン|パスタ|ピザ|フレンチ|洋食|ステーキ|ハンバーグ/.test(text)) return '2';
-  if (/寿司|すし|天ぷら|蕎麦|うどん|和食|割烹|刺身|鍋|しゃぶしゃぶ|もんじゃ|もつ鍋|たこ焼き/.test(text)) return '1';
-  if (/カレー|インド|エスニック|タイ|居酒屋|飲み|飲もう/.test(text)) return '5';
+  if (/イタリアン|パスタ|ピザ|フレンチ|洋食|ステーキ|ハンバーグ|ステーキのどん/.test(text)) return '2';
+  if (/寿司|すし|天ぷら|蕎麦|うどん|和食|割烹|刺身|鍋|しゃぶしゃぶ|もんじゃ|もつ鍋|たこ焼き|磯丸/.test(text)) return '1';
+  if (/カレー|インド|エスニック|タイ|居酒屋|飲み|飲もう|鳥貴族|串カツ|酒場|バル/.test(text)) return '5';
   return null;
 }
 
