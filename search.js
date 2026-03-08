@@ -127,7 +127,7 @@ async function searchHotpepper(genre, budget, area, limit = 3) {
 
   try {
     const genreCode = HOTPEPPER_GENRE[genre] || 'G001';
-    const budgetCode = HOTPEPPER_BUDGET[budget] || 'd006';
+    const budgetCode = HOTPEPPER_BUDGET[budget] || 'B006';
     const keyword = encodeURIComponent(getAreaKeyword(area));
 
     // ジャンルコードで絞り込み（keywordにジャンル名を混ぜると件数0になりやすい）
