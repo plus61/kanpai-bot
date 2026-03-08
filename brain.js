@@ -350,12 +350,14 @@ function detectPlanContext(messages) {
   // 過去形・無関係トピックは「最新1メッセージ」だけで判断（前メッセージの汚染防止）
   const latestMsg = messages[messages.length - 1]?.message || '';
   const isPast = /食べたよ|食べたな|食べたね|行ったよ|行ったな|飲んだよ|飲んだな|でした|ました|だった|よかった|映画|ドラマ|ゲーム|仕事|会議|授業/.test(latestMsg);
+  // 雑談・挨拶系は最新メッセージが食事文脈でない場合はスキップ（前文脈の汚染防止）
+  const isChitchat = /最近どう|どうよ|元気[？?]|何してる|久しぶり|おはよう|こんにちは|おつかれ|おやすみ|ね[ー〜]|だね|だよね|そうだね|わかる|すごい|えー|まじ？|まじか|ほんと|やばい|草|笑|www|笑笑/.test(latestMsg) && !/ランチ|ディナー|飯|ご飯|食べ|飲み|どこ行く|おすすめ|居酒屋|焼肉|ラーメン/.test(latestMsg);
 
   // 「わからん」「どうする」だけでは除外
   const isUndecided = matched < 2 || (whenMatch && !whereMatch && !foodMatch && !timeMatch);
 
-  // 2つ以上一致 かつ 過去形でない
-  const shouldApproach = matched >= 2 && !isPast;
+  // 2つ以上一致 かつ 過去形でない かつ 雑談でない
+  const shouldApproach = matched >= 2 && !isPast && !isChitchat;
 
   // 既にKanpaiが最近発言していたらスキップ（連投防止）
   const recentBotMsg = messages.slice(-5).find(m => m.display_name === 'Kanpai');

@@ -462,14 +462,39 @@ async function handleMention(event, groupId, userId, displayName, text) {
  */
 async function handleFoodSuggestion(event, groupId) {
   try {
+    const search = require('./search');
+
     const [recentMessages, foodHistory] = await Promise.all([
       memory.getRecentMessages(groupId, 15),
       memory.getGroupFoodHistory(groupId, 14),
     ]);
 
-    // メンバー数取得（概算）
-    const memberCount = Math.max(2, new Set(recentMessages.map(m => m.display_name)).size);
+    // エリアとジャンルを直近会話から抽出してHotPepper検索を試みる
+    const area = search.extractArea(recentMessages);
+    const recentText = recentMessages.slice(-5).map(m => m.message).join(' ');
+    const genreGuess = brain.guessGenreFromText(recentText);
 
+    if (area && genreGuess) {
+      try {
+        const restaurants = await search.searchRestaurants(genreGuess, '2', area, 3);
+        if (restaurants && restaurants.length > 0) {
+          const flexMsg = flex.buildRestaurantCarousel(restaurants, genreGuess, '2', area);
+          if (flexMsg) {
+            await lineClient.replyMessage({
+              replyToken: event.replyToken,
+              messages: [flexMsg]
+            });
+            await memory.updateLastBotMessage(groupId);
+            return;
+          }
+        }
+      } catch (searchErr) {
+        console.warn('handleFoodSuggestion: search failed, fallback to AI', searchErr.message);
+      }
+    }
+
+    // フォールバック: LLMによるテキスト提案
+    const memberCount = Math.max(2, new Set(recentMessages.map(m => m.display_name)).size);
     const suggestion = await brain.generateFoodSuggestion(recentMessages, foodHistory, memberCount);
 
     await lineClient.replyMessage({
