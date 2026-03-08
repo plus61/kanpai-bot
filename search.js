@@ -27,13 +27,14 @@ const HOTPEPPER_GENRE = {
   '5': 'G001',  // 居酒屋（なんでも）
 };
 
-// 予算 → Hotpepper budget_dinner (コード)
-// 参考: d002=〜1000, d003=〜2000, d005=〜3000, d006=〜4000, d007=〜5000, d008=〜6000, d009=〜7000
+// 予算 → Hotpepper budget (コード)
+// 参考: B004=〜2000, B006=〜4000, B009=〜6000, B010=〜7000
+// ※ d* コードは無効（0件になる）→ B* コードを使うこと
 const HOTPEPPER_BUDGET = {
-  '1': 'd003',  // 〜2,000円
-  '2': 'd006',  // 〜4,000円
-  '3': 'd008',  // 〜6,000円
-  '4': 'd010',  // 6,000円〜
+  '1': 'B004',  // 〜2,000円
+  '2': 'B006',  // 〜4,000円
+  '3': 'B009',  // 〜6,000円
+  '4': 'B010',  // 〜7,000円（最高額帯）
 };
 
 // エリア名 → Hotpepper large_service_area_code / service_area_code
@@ -130,10 +131,12 @@ async function searchHotpepper(genre, budget, area, limit = 3) {
     const keyword = encodeURIComponent(getAreaKeyword(area));
 
     // ジャンルコードで絞り込み（keywordにジャンル名を混ぜると件数0になりやすい）
+    // ※ budget は B* コードで指定すること（d* コードは0件になる）
     const url = `https://webservice.recruit.co.jp/hotpepper/gourmet/v1/` +
       `?key=${HOTPEPPER_KEY}` +
       `&keyword=${keyword}` +
       `&genre=${genreCode}` +
+      `&budget=${budgetCode}` +
       `&count=${limit}` +
       `&order=4` +
       `&format=json`;
@@ -196,9 +199,9 @@ async function searchPlaces(genre, budget, area, limit = 3) {
 async function searchRestaurants(genre, budget, area, limit = 3) {
   const key = cacheKey(genre, budget, area);
 
-  // 1. キャッシュチェック
+  // 1. キャッシュチェック（空配列[]はキャッシュヒットとみなさない）
   const cached = await getCache(key);
-  if (cached) return cached;
+  if (cached && cached.length > 0) return cached;
 
   // 2. Hotpepper（無料・日本特化）
   let results = await searchHotpepper(genre, budget, area, limit);
