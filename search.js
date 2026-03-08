@@ -253,8 +253,25 @@ function extractArea(messages) {
   return areas.find(a => recentText.includes(a)) || null;
 }
 
+/**
+ * テキストから予算コードを推定
+ * 「3000円以内」「〜4000円」などをHotpepperコードに変換
+ */
+function extractBudget(text) {
+  // 数値＋円パターンを抽出
+  const match = text.match(/[\d,]+円/);
+  if (!match) return null;
+  const amount = parseInt(match[0].replace(/,/g, '').replace('円', ''));
+  if (isNaN(amount)) return null;
+  if (amount <= 2000) return '1';  // ~2,000円
+  if (amount <= 4000) return '2';  // ~4,000円
+  if (amount <= 6000) return '3';  // ~6,000円
+  return '4';                       // 6,000円~
+}
+
 module.exports = {
   searchRestaurants,
   formatRestaurants,
   extractArea,
+  extractBudget,
 };

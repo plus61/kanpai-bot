@@ -373,7 +373,8 @@ function detectPlanContext(messages) {
     return count + Math.min(uniqueHits + repeatBonus, 2);
   }, 0);
   const hasSubstance = !!(whereMatch || foodMatch || timeMatch); // when単独はNG
-  const shouldApproachFinal = (shouldApproach && hasSubstance) || (foodCount >= 2 && !isPast);
+  // isChitchatの場合はfoodCount条件でも発火しない（P1/P2対策）
+  const shouldApproachFinal = (shouldApproach && hasSubstance) || (foodCount >= 2 && !isPast && !isChitchat);
 
   return {
     shouldApproach: shouldApproachFinal,

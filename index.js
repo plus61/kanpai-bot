@@ -472,13 +472,15 @@ async function handleFoodSuggestion(event, groupId) {
     // エリアとジャンルを直近会話から抽出してHotPepper検索を試みる
     const area = search.extractArea(recentMessages);
     const recentText = recentMessages.slice(-5).map(m => m.message).join(' ');
-    const genreGuess = brain.guessGenreFromText(recentText);
+    const genreGuess = brain.guessGenreFromText(recentText) || '5'; // デフォルト: '5'=なんでも/居酒屋
+    const budgetGuess = search.extractBudget(recentText) || '2';   // デフォルト: '2'=~4,000円
 
-    if (area && genreGuess) {
+    // エリアがある場合は必ずHotPepper検索を試みる（ジャンル不明でもデフォルト値で検索）
+    if (area) {
       try {
-        const restaurants = await search.searchRestaurants(genreGuess, '2', area, 3);
+        const restaurants = await search.searchRestaurants(genreGuess, budgetGuess, area, 3);
         if (restaurants && restaurants.length > 0) {
-          const flexMsg = flex.buildRestaurantCarousel(restaurants, genreGuess, '2', area);
+          const flexMsg = flex.buildRestaurantCarousel(restaurants, genreGuess, budgetGuess, area);
           if (flexMsg) {
             await lineClient.replyMessage({
               replyToken: event.replyToken,
