@@ -550,3 +550,72 @@ app.post('/debug', express.json(), (req, res) => {
   console.log('[debug] body:', JSON.stringify(req.body).substring(0, 200));
   res.json({ received: true, events: (req.body.events || []).length });
 });
+
+/**
+ * テスト用シミュレーションエンドポイント
+ * noaがUI操作なしでKP応答をテストできる
+ * 
+ * POST /test/simulate
+ * Body: { groupId, userId, message, secret }
+ * 
+ * 応答はLINEに送信されず、JSONで返される
+ */
+app.post('/test/simulate', express.json(), async (req, res) => {
+  try {
+    // シークレット認証
+    const { groupId, userId, message, secret } = req.body;
+    if (secret !== process.env.TEST_SECRET) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    
+    if (!groupId || !userId || !message) {
+      return res.status(400).json({ error: 'missing required fields: groupId, userId, message' });
+    }
+    
+    console.log('[test/simulate] groupId:', groupId, 'userId:', userId, 'message:', message);
+    
+    // 応答を収集するためのモック
+    const responses = [];
+    const mockReplyToken = `test-${Date.now()}`;
+    
+    // LINEクライアントの replyMessage をモック
+    const originalReply = lineClient.replyMessage.bind(lineClient);
+    lineClient.replyMessage = async ({ replyToken, messages }) => {
+      if (replyToken === mockReplyToken) {
+        responses.push(...messages);
+        return { sentMessages: messages.map((m, i) => ({ id: `mock-${i}` })) };
+      }
+      return originalReply({ replyToken, messages });
+    };
+    
+    // イベントをシミュレート
+    const mockEvent = {
+      type: 'message',
+      replyToken: mockReplyToken,
+      source: {
+        type: 'group',
+        groupId: groupId,
+        userId: userId,
+      },
+      message: {
+        type: 'text',
+        text: message,
+      },
+    };
+    
+    await handleEvent(mockEvent);
+    
+    // モックを元に戻す
+    lineClient.replyMessage = originalReply;
+    
+    res.json({
+      ok: true,
+      input: { groupId, userId, message },
+      responses: responses,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error('[test/simulate] error:', e.message, e.stack);
+    res.status(500).json({ error: e.message });
+  }
+});
