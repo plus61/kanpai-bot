@@ -351,7 +351,7 @@ function detectPlanContext(messages) {
   const latestMsg = messages[messages.length - 1]?.message || '';
   const isPast = /食べたよ|食べたな|食べたね|行ったよ|行ったな|飲んだよ|飲んだな|でした|ました|だった|よかった|映画|ドラマ|ゲーム|仕事|会議|授業/.test(latestMsg);
   // 雑談・挨拶系は最新メッセージが食事文脈でない場合はスキップ（前文脈の汚染防止）
-  const isChitchat = /最近どう|どうよ|元気[？?]|何してる|久しぶり|おはよう|こんにちは|おつかれ|おやすみ|ね[ー〜]|だね|だよね|そうだね|わかる|すごい|えー|まじ？|まじか|ほんと|やばい|草|笑|www|笑笑/.test(latestMsg) && !/ランチ|ディナー|飯|ご飯|食べ|飲み|どこ行く|おすすめ|居酒屋|焼肉|ラーメン/.test(latestMsg);
+  const isChitchat = /ハロー?|^hello$|^hi$|やあ|おっす|よ[ー〜]+|どもー?|最近どう|どうよ|元気[？?]|何してる|久しぶり|おはよう|こんにちは|おつかれ|おやすみ|ね[ー〜]|だね|だよね|そうだね|わかる|すごい|えー|まじ？|まじか|ほんと|やばい|草|笑|www|笑笑/.test(latestMsg) && !/ランチ|ディナー|飯|ご飯|食べ|飲み|どこ行く|おすすめ|居酒屋|焼肉|ラーメン|中華|和食|洋食|寿司|カレー|お腹|腹|美味|うまい|安くて|奮発|記念日|予約|店/.test(latestMsg);
 
   // 「わからん」「どうする」だけでは除外
   const isUndecided = matched < 2 || (whenMatch && !whereMatch && !foodMatch && !timeMatch);
@@ -391,9 +391,8 @@ function detectPlanContext(messages) {
 async function generateProactiveApproach(context, recentMessages) {
   try {
     const area = context.where;
-    // 直近3メッセージのみからジャンル推定（古い文脈を引きずらない）
-    const recentText = recentMessages.slice(-3).map(m => m.message).join(' ');
-    const genreGuess = guessGenreFromText(recentText);
+    // 直近3メッセージのみからジャンル推定（直近優先で古い文脈を引きずらない）
+    const genreGuess = guessGenreFromMessages(recentMessages.slice(-3));
 
     // お店検索（エリアが判明している場合）→ Flex優先、fallbackにテキスト
     if (area && genreGuess) {
@@ -438,6 +437,19 @@ async function generateProactiveApproach(context, recentMessages) {
 }
 
 /**
+ * メッセージリストからジャンルを推定（直近メッセージ優先）
+ * 最新メッセージから順に確認し、最初にマッチしたジャンルを返す
+ */
+function guessGenreFromMessages(messages) {
+  const orderedMessages = messages.slice().reverse();
+  for (const msg of orderedMessages) {
+    const genre = guessGenreFromText(msg.message);
+    if (genre) return genre;
+  }
+  return null;
+}
+
+/**
  * テキストからジャンルコードを推定
  */
 function guessGenreFromText(text) {
@@ -459,4 +471,5 @@ module.exports = {
   detectPlanContext,
   generateProactiveApproach,
   guessGenreFromText,
+  guessGenreFromMessages,
 };

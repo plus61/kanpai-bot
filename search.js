@@ -248,12 +248,18 @@ function formatRestaurants(restaurants, genre, budget, area) {
 }
 
 /**
- * 会話からエリアを推定
+ * 会話からエリアを推定（直近メッセージ優先）
+ * 最新メッセージから順に確認し、最も新しいエリア指定を返す
  */
 function extractArea(messages) {
   const areas = Object.keys(AREA_CODES);
-  const recentText = messages.slice(-10).map(m => m.message).join(' ');
-  return areas.find(a => recentText.includes(a)) || null;
+  // 直近から順にチェック（文脈引き継ぎの正確性向上）
+  const orderedMessages = messages.slice(-10).reverse();
+  for (const msg of orderedMessages) {
+    const found = areas.find(a => msg.message.includes(a));
+    if (found) return found;
+  }
+  return null;
 }
 
 /**

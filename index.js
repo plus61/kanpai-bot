@@ -136,6 +136,20 @@ app.get('/cron/monitor', async (req, res) => {
 });
 
 /**
+ * 純粋な雑談・挨拶かどうかを判定
+ * 食事・飲食関連ワードがある場合はfalseを返す（スキップしない）
+ */
+function isPureChitchat(text) {
+  // 食事・飲食関連ワードがあれば雑談ではない
+  const hasFoodContext = /ランチ|ディナー|ご飯|飯|めし|食べ|飲み|飲も|居酒屋|焼肉|ラーメン|寿司|中華|パスタ|カレー|お腹|腹|うまい|美味|おいしい|お店|店|おすすめ|どこ行く|どこ食べ|いいとこ|安くて|奮発|記念日|予約|ジャンル|和食|洋食|イタリアン|焼き鳥|鍋|しゃぶ|行きたい|食いたい/.test(text);
+  if (hasFoodContext) return false;
+
+  // 挨拶・雑談パターン（食事ワードなし + これらに一致 → スキップ）
+  const chitchatPattern = /^(ハロー?|hello|hi|やあ|おはよ|こんにちは|こんばんは|おっす|よー|どもー?|おつかれ|おやすみ)[！!？?]*$|最近どう|どうよ|元気[？?]|何してる|久しぶり/i;
+  return chitchatPattern.test(text.trim());
+}
+
+/**
  * イベントハンドラ
  */
 async function handleEvent(event) {
@@ -176,6 +190,12 @@ async function handleEvent(event) {
 
       // グループメッセージのみ処理
       if (!isGroup || !groupId) return;
+
+      // 純粋な雑談・挨拶はスキップ（店舗提案しない）
+      if (isPureChitchat(text)) {
+        console.log('[handleEvent] chitchat detected, skipping:', text);
+        return;
+      }
 
       // 食事記録を試みる
       const foodData = await brain.extractFoodFromText(text);
@@ -219,7 +239,17 @@ async function handleEvent(event) {
         '何食べる', 'なに食べる', 'どこ行く', 'ご飯', '飯どこ',
         'なに食べ', 'お腹すいた', 'おすすめ', 'オススメ', 'おすすめある',
         '何がいい', 'どこがいい', 'どこ食べ', '飯どうする', 'めし',
-        'ランチ', 'ディナー', '夜ごはん', '昼ごはん'
+        'ランチ', 'ディナー', '夜ごはん', '昼ごはん',
+        // 追加: 曖昧・条件系（S09-S15対応）
+        '安くて', '安い', '奮発', '記念日', '特別な', '予約',
+        '他にある', '他ある', '他は', '別の',
+        '駅近', 'いい店', 'いいとこ', 'いいお店', 'お店ある',
+        'とこない', '店ある', '店教えて',
+        '苦手', '除いて', '抜きで', 'なしで',
+        '焼肉', '中華', 'ラーメン', '寿司', 'イタリアン', '和食', '洋食',
+        '居酒屋', '焼き鳥', '鍋', 'しゃぶ', 'カレー',
+        '食べたい', '行きたい', '食いたい',
+        'この辺', 'この辺で', 'そこ予約',
       ];
       const hasFoodTrigger = foodTriggers.some(t => text.includes(t));
 
@@ -470,9 +500,10 @@ async function handleFoodSuggestion(event, groupId) {
     ]);
 
     // エリアとジャンルを直近会話から抽出してHotPepper検索を試みる
+    // extractArea: 直近優先で最新のエリアを返す
     const area = search.extractArea(recentMessages);
-    const recentText = recentMessages.slice(-5).map(m => m.message).join(' ');
-    const genreGuess = brain.guessGenreFromText(recentText) || '5'; // デフォルト: '5'=なんでも/居酒屋
+    // guessGenreFromMessages: 直近優先でジャンルを返す（コンテキスト引き継ぎ対応）
+    const genreGuess = brain.guessGenreFromMessages(recentMessages.slice(-5)) || '5'; // デフォルト: '5'=なんでも/居酒屋
     const budgetGuess = search.extractBudget(recentText) || '2';   // デフォルト: '2'=~4,000円
 
     // エリアがある場合は必ずHotPepper検索を試みる（ジャンル不明でもデフォルト値で検索）
