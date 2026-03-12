@@ -502,6 +502,7 @@ async function handleFoodSuggestion(event, groupId) {
     // エリアとジャンルを直近会話から抽出してHotPepper検索を試みる
     // extractArea: 直近優先で最新のエリアを返す
     const area = search.extractArea(recentMessages);
+    const recentText = recentMessages.slice(-5).map(m => m.message).join(' ');
     // guessGenreFromMessages: 直近優先でジャンルを返す（コンテキスト引き継ぎ対応）
     const genreGuess = brain.guessGenreFromMessages(recentMessages.slice(-5)) || '5'; // デフォルト: '5'=なんでも/居酒屋
     const budgetGuess = search.extractBudget(recentText) || '2';   // デフォルト: '2'=~4,000円
