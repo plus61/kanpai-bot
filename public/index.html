@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kanpai Bot 🍻 - LINEグループの飲み会をAIが全部決めてくれる</title>
+  <meta name="description" content="Kanpai Botはホットペッパーグルメと連携し、LINEグループの食事・飲み会を完全サポート。AIが食事記録、お店提案、投票をすべて管理します。">
+  <meta property="og:title" content="Kanpai Bot 🍻 - LINEグループの飲み会をAIが全部決めてくれる">
+  <meta property="og:description" content="ホットペッパーグルメ連携。食事記録、お店提案、投票、幹事AIで、もう面倒な決定はいりません。">
+  <meta property="og:url" content="https://kanpai-bot.vercel.app/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Kanpai Bot">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #1a1a1a;
+      line-height: 1.6;
+    }
+    
+    /* Hero Section */
+    .hero {
+      background: linear-gradient(135deg, #1a3a52 0%, #2d5a7b 100%);
+      color: white;
+      padding: 60px 20px;
+      text-align: center;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+    
+    .hero h1 {
+      font-size: 48px;
+      margin-bottom: 20px;
+      font-weight: 700;
+    }
+    
+    .hero .tagline {
+      font-size: 24px;
+      margin-bottom: 40px;
+      font-weight: 300;
+      opacity: 0.95;
+    }
+    
+    .hero .description {
+      font-size: 16px;
+      margin-bottom: 50px;
+      max-width: 600px;
+      line-height: 1.8;
+      opacity: 0.9;
+    }
+    
+    .cta-button {
+      display: inline-block;
+      background-color: #00b900;
+      color: white;
+      padding: 18px 50px;
+      font-size: 18px;
+      border: none;
+      border-radius: 50px;
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 600;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(0, 185, 0, 0.3);
+    }
+    
+    .cta-button:hover {
+      background-color: #00a500;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0, 185, 0, 0.4);
+    }
+    
+    /* Features Section */
+    .features {
+      padding: 80px 20px;
+      background: white;
+    }
+    
+    .features-container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    
+    .features h2 {
+      text-align: center;
+      font-size: 36px;
+      margin-bottom: 60px;
+      color: #1a3a52;
+    }
+    
+    .features-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 40px;
+    }
+    
+    @media (min-width: 768px) {
+      .features-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    
+    .feature-card {
+      padding: 40px;
+      background: #f8f9fa;
+      border-radius: 12px;
+      border-left: 4px solid #1a3a52;
+      transition: all 0.3s ease;
+    }
+    
+    .feature-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    }
+    
+    .feature-card h3 {
+      font-size: 22px;
+      margin-bottom: 15px;
+      color: #1a3a52;
+    }
+    
+    .feature-card p {
+      font-size: 15px;
+      color: #555;
+      line-height: 1.8;
+    }
+    
+    /* Integration Section */
+    .integration {
+      padding: 60px 20px;
+      background: #f0f4f8;
+      text-align: center;
+    }
+    
+    .integration-container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    
+    .integration h2 {
+      font-size: 28px;
+      margin-bottom: 20px;
+      color: #1a3a52;
+    }
+    
+    .integration p {
+      font-size: 16px;
+      color: #555;
+      margin-bottom: 30px;
+    }
+    
+    .integration-badge {
+      display: inline-block;
+      padding: 20px 40px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    }
+    
+    .integration-badge img {
+      height: 50px;
+    }
+    
+    /* Footer */
+    footer {
+      background: #1a3a52;
+      color: white;
+      padding: 40px 20px;
+      text-align: center;
+    }
+    
+    footer p {
+      margin: 10px 0;
+      font-size: 14px;
+      opacity: 0.8;
+    }
+    
+    /* Mobile Optimization */
+    @media (max-width: 768px) {
+      .hero h1 {
+        font-size: 36px;
+      }
+      
+      .hero .tagline {
+        font-size: 20px;
+      }
+      
+      .features h2 {
+        font-size: 28px;
+      }
+      
+      .cta-button {
+        padding: 15px 40px;
+        font-size: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Hero Section -->
+  <section class="hero">
+    <h1>Kanpai Bot 🍻</h1>
+    <p class="tagline">LINEグループの食事・飲み会を、AIが全部決めてくれる</p>
+    <p class="description">
+      面倒な飲み会の企画はもう終わり。Kanpai Botは、食事の記録、お店の提案、投票、そして幹事業務まで、すべてをAIが自動で管理します。
+    </p>
+    <a href="https://line.me/R/ti/p/@707pzfuq" class="cta-button">LINEで友だち追加</a>
+  </section>
+
+  <!-- Features Section -->
+  <section class="features">
+    <div class="features-container">
+      <h2>主な機能</h2>
+      <div class="features-grid">
+        <div class="feature-card">
+          <h3>📋 食事記録</h3>
+          <p>グループの食事履歴を自動で記録・管理。誰が何を食べたか、いつどこに行ったか、すべてを可視化します。</p>
+        </div>
+        <div class="feature-card">
+          <h3>🍽️ AIお店提案</h3>
+          <p>ホットペッパーグルメと連携し、グループの好みやメンバーの食事記録を学習して、ぴったりのお店を提案します。</p>
+        </div>
+        <div class="feature-card">
+          <h3>🗳️ 投票機能</h3>
+          <p>複数のお店から選ぶとき、グループ全体で投票できます。民主的に決定、文句なし。</p>
+        </div>
+        <div class="feature-card">
+          <h3>🤖 幹事AI</h3>
+          <p>日時調整、予約管理、リマインダーまで。AIが幹事業務をすべてサポートします。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Integration Section -->
+  <section class="integration">
+    <div class="integration-container">
+      <h2>ホットペッパーグルメと連携</h2>
+      <p>
+        Kanpai Botはホットペッパーグルメの膨大なレストラン情報を活用し、リアルタイムで最新のお店情報を提供します。<br>
+        食事の好みに応じた最適なお店を、いつでも提案できます。
+      </p>
+      <div class="integration-badge">
+        <p style="font-size: 16px; color: #1a3a52; font-weight: 600;">Powered by ホットペッパーグルメ</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <p>&copy; 2026 Kanpai Bot. All rights reserved.</p>
+    <p>Powered by ホットペッパーグルメ API</p>
+    <p style="margin-top: 20px; font-size: 12px; opacity: 0.6;">
+      このサービスはホットペッパーグルメのAPIを使用して、レストラン情報を提供しています。
+    </p>
+  </footer>
+</body>
+</html>
