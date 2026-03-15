@@ -5,11 +5,17 @@
 require('dotenv').config();
 const express = require('express');
 const line = require('@line/bot-sdk');
+const { createClient } = require('@supabase/supabase-js');
 const memory = require('./memory');
 const brain = require('./brain');
 const kanji = require('./kanji');
 const collector = require('./collector');
 const flex = require('./flex');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY
+);
 
 const app = express();
 
@@ -280,7 +286,7 @@ async function handleEvent(event) {
       const recentMsgs = await memory.getRecentMessages(groupId, 8);
       const planCtx = brain.detectPlanContext(recentMsgs);
       if (planCtx.shouldApproach) {
-        const approachMsg = await brain.generateProactiveApproach(planCtx, recentMsgs);
+        const approachMsg = await brain.generateProactiveApproach(planCtx, recentMsgs, groupId);
         if (approachMsg) {
           // Flex or テキストを自動判別
           const lineMsg = typeof approachMsg === 'string'
@@ -424,7 +430,7 @@ async function handleDMResponse(event, userId, text) {
             memory.getGroupFoodHistory(session.group_id, 14)
           ]);
           const suggestion = await brain.generateDMBasedSuggestion(
-            recentMessages, foodHistory, result
+            recentMessages, foodHistory, result, session.group_id
           );
           setTimeout(async () => {
             if (typeof suggestion === 'string') {
@@ -589,6 +595,58 @@ module.exports = app;
 app.post('/debug', express.json(), (req, res) => {
   console.log('[debug] body:', JSON.stringify(req.body).substring(0, 200));
   res.json({ received: true, events: (req.body.events || []).length });
+});
+
+/**
+ * GET /track - タップ計測 → Supabase記録 → リダイレクト
+ */
+app.get('/track', async (req, res) => {
+  const { type, shop_id, shop_name, group_id, genre, budget, area, redirect } = req.query;
+  try {
+    await supabase.from('tap_events').insert({
+      event_type: type || 'unknown',
+      shop_id: shop_id || null,
+      shop_name: shop_name || null,
+      group_id: group_id || null,
+      genre: genre || null,
+      budget: budget || null,
+      area: area || null,
+    });
+  } catch (e) {
+    console.error('[track] supabase insert error:', e.message);
+  }
+  const dest = redirect || 'https://www.hotpepper.jp/';
+  res.redirect(302, dest);
+});
+
+/**
+ * GET /track/stats - タップ集計（内部確認用）
+ */
+app.get('/track/stats', async (req, res) => {
+  const token = req.headers['authorization'] || req.query.token;
+  if (process.env.CRON_SECRET && token !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    const { data } = await supabase
+      .from('tap_events')
+      .select('event_type, shop_name, area, tapped_at')
+      .order('tapped_at', { ascending: false })
+      .limit(500);
+    const walkin = data.filter(d => d.event_type === 'walkin').length;
+    const reserve = data.filter(d => d.event_type === 'reserve').length;
+    const total = data.length;
+    res.json({
+      total,
+      walkin,
+      reserve,
+      walkin_pct: total ? Math.round(walkin / total * 100) : 0,
+      reserve_pct: total ? Math.round(reserve / total * 100) : 0,
+      recent: data.slice(0, 10),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 /**

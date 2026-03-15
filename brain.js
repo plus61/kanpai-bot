@@ -237,7 +237,7 @@ ${resultText}
 /**
  * DM収集結果をもとに食事提案を生成（Google Places連携）
  */
-async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult) {
+async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult, groupId = '') {
   try {
     const budgetMap = { '1': '〜2,000円', '2': '〜4,000円', '3': '〜6,000円', '4': '6,000円〜' };
     const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': 'なんでも' };
@@ -255,7 +255,7 @@ async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult) 
 
     if (restaurants && restaurants.length > 0) {
       const { buildRestaurantCarousel } = require('./flex');
-      const flexMsg = buildRestaurantCarousel(restaurants, dmResult.genre, dmResult.budget, area);
+      const flexMsg = buildRestaurantCarousel(restaurants, dmResult.genre, dmResult.budget, area, groupId);
       if (flexMsg) return flexMsg; // Flexオブジェクト返却
     }
 
@@ -388,7 +388,7 @@ function detectPlanContext(messages) {
 /**
  * プラン文脈を検出した際の能動的アプローチ（お店検索まで一気にやる）
  */
-async function generateProactiveApproach(context, recentMessages) {
+async function generateProactiveApproach(context, recentMessages, groupId = '') {
   try {
     const area = context.where;
     // 直近3メッセージのみからジャンル推定（直近優先で古い文脈を引きずらない）
@@ -400,7 +400,7 @@ async function generateProactiveApproach(context, recentMessages) {
       if (restaurants && restaurants.length > 0) {
         // Flex Messageオブジェクトを返す（index.jsで判定してreplyMessage）
         const { buildRestaurantCarousel } = require('./flex');
-        const flexMsg = buildRestaurantCarousel(restaurants, genreGuess, '2', area);
+        const flexMsg = buildRestaurantCarousel(restaurants, genreGuess, '2', area, groupId);
         if (flexMsg) return flexMsg; // オブジェクト返却
       }
     }

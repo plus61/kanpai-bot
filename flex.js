@@ -22,10 +22,31 @@ const GENRE_COLOR = {
   '5': '#1A5276', // 居酒屋 → 深い紺
 };
 
+const BASE_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : 'https://kanpai-bot.vercel.app';
+
+/**
+ * タップ計測付きリダイレクトURLを生成
+ */
+function trackUrl(type, shop, groupId, genre, budget, area) {
+  const params = new URLSearchParams({
+    type,
+    shop_id: shop.hotpepperId || '',
+    shop_name: shop.name || '',
+    group_id: groupId || '',
+    genre: genre || '',
+    budget: budget || '',
+    area: area || '',
+    redirect: shop.url || '',
+  });
+  return `${BASE_URL}/track?${params.toString()}`;
+}
+
 /**
  * 1店舗のバブル（カード）を生成
  */
-function buildShopBubble(shop, index, genre) {
+function buildShopBubble(shop, index, genre, groupId, budget, area) {
   const accentColor = GENRE_COLOR[genre] || '#5D6D7E';
   const rankEmoji = ['🥇', '🥈', '🥉'][index] || `${index + 1}.`;
 
@@ -123,20 +144,31 @@ function buildShopBubble(shop, index, genre) {
     paddingAll: '16px',
   };
 
+  const walkinUrl = shop.url ? trackUrl('walkin', shop, groupId, genre, budget, area) : null;
+  const reserveUrl = shop.url ? trackUrl('reserve', shop, groupId, genre, budget, area) : null;
+
   const footer = {
     type: 'box',
     layout: 'vertical',
+    spacing: 'sm',
     contents: [
+      // 席押さえボタン（walk-in）
       {
         type: 'button',
-        action: {
-          type: shop.url ? 'uri' : 'message',
-          label: shop.url ? 'ホットペッパーで見る 🔗' : 'これにする！🍻',
-          uri: shop.url || undefined,
-          text: shop.url ? undefined : `${shop.name}にする！`,
-        },
+        action: walkinUrl
+          ? { type: 'uri', label: '🏃 今すぐ席を押さえる', uri: walkinUrl }
+          : { type: 'message', label: '🏃 席を押さえる', text: `${shop.name}の席を押さえたい！` },
         style: 'primary',
         color: accentColor,
+        height: 'sm',
+      },
+      // コース予約ボタン（アフィリエイト）
+      {
+        type: 'button',
+        action: reserveUrl
+          ? { type: 'uri', label: '📋 コース予約はこちら', uri: reserveUrl }
+          : { type: 'message', label: '📋 コース予約', text: `${shop.name}でコース予約したい！` },
+        style: 'secondary',
         height: 'sm',
       },
     ],
@@ -173,7 +205,7 @@ function buildShopBubble(shop, index, genre) {
 /**
  * カルーセル形式のFlex Messageを生成
  */
-function buildRestaurantCarousel(restaurants, genre, budget, area) {
+function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '') {
   if (!restaurants || restaurants.length === 0) return null;
 
   const areaText = area ? `${area}周辺` : '周辺';
@@ -181,7 +213,7 @@ function buildRestaurantCarousel(restaurants, genre, budget, area) {
   const budgetText = BUDGET_LABEL[budget] || '';
 
   const bubbles = restaurants.slice(0, 3).map((shop, i) =>
-    buildShopBubble(shop, i, genre)
+    buildShopBubble(shop, i, genre, groupId, budget, area)
   );
 
   return {

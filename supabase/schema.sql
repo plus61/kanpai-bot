@@ -102,3 +102,18 @@ CREATE TABLE IF NOT EXISTS user_follows (
   is_following BOOLEAN DEFAULT true,
   last_seen TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- タップイベント計測（席押さえ vs コース予約）
+CREATE TABLE IF NOT EXISTS tap_events (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  event_type TEXT NOT NULL,    -- 'walkin' or 'reserve'
+  shop_id TEXT,                -- HotPepper shop ID
+  shop_name TEXT,
+  group_id TEXT,
+  genre TEXT,
+  budget TEXT,
+  area TEXT,
+  tapped_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS tap_events_type_idx ON tap_events(event_type);
+CREATE INDEX IF NOT EXISTS tap_events_tapped_at_idx ON tap_events(tapped_at);
