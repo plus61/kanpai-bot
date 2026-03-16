@@ -205,12 +205,13 @@ function buildShopBubble(shop, index, genre, groupId, budget, area) {
 /**
  * カルーセル形式のFlex Messageを生成
  */
-function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '') {
+function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '', options = {}) {
   if (!restaurants || restaurants.length === 0) return null;
 
   const areaText = area ? `${area}周辺` : '周辺';
   const genreText = GENRE_LABEL[genre] || 'お店';
   const budgetText = BUDGET_LABEL[budget] || '';
+  const mealTypeText = options.lunch ? 'ランチ' : genreText;
 
   const bubbles = restaurants.slice(0, 3).map((shop, i) =>
     buildShopBubble(shop, i, genre, groupId, budget, area)
@@ -218,7 +219,7 @@ function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '')
 
   return {
     type: 'flex',
-    altText: `${areaText}の${genreText}（${budgetText}）を${restaurants.length}件見つけたよ🍻`,
+    altText: `${areaText}の${mealTypeText}（${budgetText}）を${restaurants.length}件見つけたよ🍻`,
     contents: {
       type: 'carousel',
       contents: bubbles,

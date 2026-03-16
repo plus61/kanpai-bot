@@ -122,7 +122,7 @@ async function setCache(key, results, area, genre, budget) {
 /**
  * Hotpepper APIでお店検索
  */
-async function searchHotpepper(genre, budget, area, limit = 3) {
+async function searchHotpepper(genre, budget, area, limit = 3, options = {}) {
   if (!HOTPEPPER_KEY) return null;
 
   try {
@@ -132,7 +132,7 @@ async function searchHotpepper(genre, budget, area, limit = 3) {
 
     // ジャンルコードで絞り込み（keywordにジャンル名を混ぜると件数0になりやすい）
     // ※ budget は B* コードで指定すること（d* コードは0件になる）
-    const url = `https://webservice.recruit.co.jp/hotpepper/gourmet/v1/` +
+    let url = `https://webservice.recruit.co.jp/hotpepper/gourmet/v1/` +
       `?key=${HOTPEPPER_KEY}` +
       `&keyword=${keyword}` +
       `&genre=${genreCode}` +
@@ -140,6 +140,12 @@ async function searchHotpepper(genre, budget, area, limit = 3) {
       `&count=${limit}` +
       `&order=4` +
       `&format=json`;
+    // ランチ検索オプション
+    if (options.lunch) url += '&lunch=1';
+    // 大人数対応
+    if (options.partyCapacity) url += `&party_capacity=${options.partyCapacity}`;
+    // 個室
+    if (options.privateRoom) url += '&private_room=1';
 
     const data = await httpsGet(url);
     const shops = data?.results?.shop;
@@ -196,23 +202,31 @@ async function searchPlaces(genre, budget, area, limit = 3) {
 /**
  * メイン検索関数（キャッシュ → Hotpepper → Places の優先順）
  */
-async function searchRestaurants(genre, budget, area, limit = 3) {
-  const key = cacheKey(genre, budget, area);
+async function searchRestaurants(genre, budget, area, limit = 3, options = {}) {
+  // オプション付きの場合はキャッシュキーに含める
+  const optKey = options.lunch ? '_lunch' : options.privateRoom ? '_private' : '';
+  const key = cacheKey(genre, budget, area) + optKey;
 
   // 1. キャッシュチェック（空配列[]はキャッシュヒットとみなさない）
   const cached = await getCache(key);
   if (cached && cached.length > 0) return cached;
 
   // 2. Hotpepper（無料・日本特化）
-  let results = await searchHotpepper(genre, budget, area, limit);
+  let results = await searchHotpepper(genre, budget, area, limit, options);
 
-  // 3. Hotpepper失敗時はPlacesにフォールバック
+  // 3. ランチ検索でゼロ件の場合は通常検索にフォールバック
+  if ((!results || results.length === 0) && options.lunch) {
+    console.log('[search] Hotpepper lunch miss, retrying without lunch filter');
+    results = await searchHotpepper(genre, budget, area, limit, {});
+  }
+
+  // 4. Hotpepper失敗時はPlacesにフォールバック
   if (!results || results.length === 0) {
     console.log('[search] Hotpepper miss, falling back to Places');
     results = await searchPlaces(genre, budget, area, limit);
   }
 
-  // 4. キャッシュ保存（24時間）
+  // 5. キャッシュ保存（24時間）
   if (results && results.length > 0) {
     await setCache(key, results, area, genre, budget);
   }
@@ -268,14 +282,30 @@ function extractArea(messages) {
  */
 function extractBudget(text) {
   // 数値＋円パターンを抽出
-  const match = text.match(/[\d,]+円/);
+  const match = text.match(/([\d,]+)円/);
   if (!match) return null;
-  const amount = parseInt(match[0].replace(/,/g, '').replace('円', ''));
+  const amount = parseInt(match[1].replace(/,/g, ''));
   if (isNaN(amount)) return null;
   if (amount <= 2000) return '1';  // ~2,000円
+  if (amount <= 3000) return '1';  // 3,000円以内 → B004(〜2,000円)で安全側に倒す
   if (amount <= 4000) return '2';  // ~4,000円
   if (amount <= 6000) return '3';  // ~6,000円
   return '4';                       // 6,000円~
+}
+
+/**
+ * テキストから検索オプションを抽出（ランチ・個室・大人数）
+ */
+function extractSearchOptions(text) {
+  const options = {};
+  if (/ランチ|昼ごはん|昼飯|お昼/.test(text)) options.lunch = true;
+  if (/個室|プライベート/.test(text)) options.privateRoom = true;
+  const partyMatch = text.match(/(\d+)人以上|(\d+)名以上/);
+  if (partyMatch) {
+    const n = parseInt(partyMatch[1] || partyMatch[2]);
+    if (n >= 10) options.partyCapacity = n;
+  }
+  return options;
 }
 
 module.exports = {
@@ -283,4 +313,5 @@ module.exports = {
   formatRestaurants,
   extractArea,
   extractBudget,
+  extractSearchOptions,
 };

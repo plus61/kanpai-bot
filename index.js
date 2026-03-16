@@ -520,19 +520,26 @@ async function handleFoodSuggestion(event, groupId) {
     ]);
 
     // エリアとジャンルを直近会話から抽出してHotPepper検索を試みる
-    // extractArea: 直近優先で最新のエリアを返す
     const area = search.extractArea(recentMessages);
     const recentText = recentMessages.slice(-5).map(m => m.message).join(' ');
-    // guessGenreFromMessages: 直近優先でジャンルを返す（コンテキスト引き継ぎ対応）
-    const genreGuess = brain.guessGenreFromMessages(recentMessages.slice(-5)) || '5'; // デフォルト: '5'=なんでも/居酒屋
-    const budgetGuess = search.extractBudget(recentText) || '2';   // デフォルト: '2'=~4,000円
+    const currentMessage = recentMessages[recentMessages.length - 1]?.message || '';
 
-    // エリアがある場合は必ずHotPepper検索を試みる（ジャンル不明でもデフォルト値で検索）
+    // ユーザーの直近メッセージから検索オプション抽出（ランチ・個室・大人数）
+    const searchOptions = search.extractSearchOptions(currentMessage + ' ' + recentText);
+
+    // ジャンル推定: 直近メッセージを優先
+    const genreGuess = brain.guessGenreFromMessages(recentMessages.slice(-5)) || '5';
+    const budgetGuess = search.extractBudget(recentText) || '2';
+
+    // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食(ランチ向け)に変更
+    const effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1' : genreGuess;
+
+    // エリアがある場合は必ずHotPepper検索を試みる
     if (area) {
       try {
-        const restaurants = await search.searchRestaurants(genreGuess, budgetGuess, area, 3);
+        const restaurants = await search.searchRestaurants(effectiveGenre, budgetGuess, area, 3, searchOptions);
         if (restaurants && restaurants.length > 0) {
-          const flexMsg = flex.buildRestaurantCarousel(restaurants, genreGuess, budgetGuess, area);
+          const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area);
           if (flexMsg) {
             await lineClient.replyMessage({
               replyToken: event.replyToken,
@@ -548,8 +555,16 @@ async function handleFoodSuggestion(event, groupId) {
     }
 
     // フォールバック: LLMによるテキスト提案
+    // 特定ジャンル希望がある場合はgenerateFreeBotResponseで文脈を活かす
     const memberCount = Math.max(2, new Set(recentMessages.map(m => m.display_name)).size);
-    const suggestion = await brain.generateFoodSuggestion(recentMessages, foodHistory, memberCount);
+    let suggestion;
+    if (genreGuess && genreGuess !== '5') {
+      // ユーザーが特定ジャンルを指定 → generateFreeResponseでKANPAI_SYSTEMに従って応答
+      suggestion = await brain.generateFreeResponse(recentMessages, currentMessage, 'ユーザー');
+    } else {
+      // ジャンル不明 → 通常のジャンル提案
+      suggestion = await brain.generateFoodSuggestion(recentMessages, foodHistory, memberCount);
+    }
 
     await lineClient.replyMessage({
       replyToken: event.replyToken,
