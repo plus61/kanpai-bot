@@ -287,8 +287,7 @@ function extractBudget(text) {
   const amount = parseInt(match[1].replace(/,/g, ''));
   if (isNaN(amount)) return null;
   if (amount <= 2000) return '1';  // ~2,000円
-  if (amount <= 3000) return '1';  // 3,000円以内 → B004(〜2,000円)で安全側に倒す
-  if (amount <= 4000) return '2';  // ~4,000円
+  if (amount <= 4000) return '2';  // ~4,000円（3,000円も含む）
   if (amount <= 6000) return '3';  // ~6,000円
   return '4';                       // 6,000円~
 }

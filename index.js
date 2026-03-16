@@ -529,7 +529,10 @@ async function handleFoodSuggestion(event, groupId) {
 
     // ジャンル推定: 直近メッセージを優先
     const genreGuess = brain.guessGenreFromMessages(recentMessages.slice(-5)) || '5';
-    const budgetGuess = search.extractBudget(recentText) || '2';
+    // 予算: 現在のメッセージを優先、なければ直近2件のみ参照（古い予算が混入しないように）
+    const budgetGuess = search.extractBudget(currentMessage)
+      || search.extractBudget(recentMessages.slice(-2).map(m => m.message).join(' '))
+      || '2';
 
     // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食(ランチ向け)に変更
     const effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1' : genreGuess;
