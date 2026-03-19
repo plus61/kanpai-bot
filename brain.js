@@ -108,6 +108,26 @@ async function generateFoodSuggestion(recentMessages, foodHistory, memberCount) 
       .map(m => `${m.display_name}: ${m.message}`)
       .join('\n');
 
+    // S24対応: 直前のKanpai発言から「前回提案したジャンル」を抽出してNGリストに追加
+    const prevSuggestions = recentMessages
+      .filter(m => m.display_name === 'Kanpai')
+      .slice(-3)
+      .map(m => m.message)
+      .join('\n');
+
+    // S25対応: 曖昧リクエスト検出（エリア・人数が不明な場合は先に確認する）
+    const latestUserMsg = recentMessages.filter(m => m.display_name !== 'Kanpai').slice(-1)[0]?.message || '';
+    const isVague = /なんか|いい感じ|どこでも|なんでも|おまかせ|適当/.test(latestUserMsg);
+    const hasArea = /渋谷|新宿|六本木|銀座|池袋|品川|恵比寿|中目黒|表参道|梅田|難波|横浜|名古屋|京都|博多|駅/.test(chatText);
+    const hasCount = /\d+人|何人|大人数|少人数|2人|3人|4人|5人/.test(chatText);
+
+    if (isVague && (!hasArea || !hasCount)) {
+      const missing = [];
+      if (!hasArea) missing.push('エリア（渋谷・新宿など）');
+      if (!hasCount) missing.push('人数');
+      return `いいね！${missing.join('と')}を教えてくれたら、ぴったりの店探すよ😊`;
+    }
+
     const response = await client.chat.completions.create({
       model: MODEL,
       max_tokens: 400,
@@ -120,11 +140,14 @@ async function generateFoodSuggestion(recentMessages, foodHistory, memberCount) 
 【絶対に提案禁止（直近で食べたもの）】
 ${historyText}
 
+【前回Kanpaiが提案したもの（重複NG）】
+${prevSuggestions || 'なし'}
+
 【最近の会話】
 ${chatText}
 
 ルール：
-- 上記の禁止リストに含まれるジャンル名・食材名は一切使わない
+- 上記の禁止リスト・前回提案のジャンルは一切使わない（必ず違うジャンルで）
 - 被りゼロの3ジャンルを短く提案する
 - markdown禁止（**太字**使わない）`
         }
@@ -153,11 +176,32 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       content: `${displayName}: ${userMessage}`
     });
 
+    // S24対応: 「さっきと違う」「他にある？」系のリクエスト検出
+    const isDifferentRequest = /さっきと違う|別の|他に(ある|ない|は)?|違う(の|店|ところ|提案)|もっと(他|違う)|変えて/.test(userMessage);
+
+    // S25対応: 曖昧リクエスト検出
+    const isVague = /なんか|いい感じ|どこでも|なんでも|おまかせ|適当/.test(userMessage);
+    const chatText = recentMessages.slice(-10).map(m => m.message).join(' ');
+    const hasArea = /渋谷|新宿|六本木|銀座|池袋|品川|恵比寿|中目黒|表参道|梅田|難波|横浜|名古屋|京都|博多|駅/.test(chatText);
+    const hasCount = /\d+人|何人|大人数|少人数/.test(chatText);
+
+    if (isVague && (!hasArea || !hasCount)) {
+      const missing = [];
+      if (!hasArea) missing.push('エリア');
+      if (!hasCount) missing.push('人数');
+      return `いいね！${missing.join('と')}教えてくれたら探すよ😊`;
+    }
+
+    // S24: 前回提案を明示的にsystemに伝える
+    const extraInstruction = isDifferentRequest
+      ? '\n\n【重要】ユーザーが「さっきと違う」と言っています。直前のassistant発言で提案したジャンル・店・エリアとは必ず異なる提案をしてください。'
+      : '';
+
     const response = await client.chat.completions.create({
       model: MODEL,
       max_tokens: 300,
       messages: [
-        { role: 'system', content: KANPAI_SYSTEM },
+        { role: 'system', content: KANPAI_SYSTEM + extraInstruction },
         ...chatHistory
       ]
     });
