@@ -608,12 +608,7 @@ async function handleVoteResponse(event, groupId, userId, optionIndex) {
   }
 }
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🍻 Kanpai Bot running on port ${PORT}`);
-});
 
-module.exports = app;
 
 // デバッグ：全リクエストをログ（一時的）
 app.post('/debug', express.json(), (req, res) => {
@@ -741,3 +736,10 @@ app.post('/test/simulate', express.json(), async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🍻 Kanpai Bot running on port ${PORT}`);
+});
+
+module.exports = app;
