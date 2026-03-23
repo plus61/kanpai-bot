@@ -438,14 +438,12 @@ async function handleDMResponse(event, userId, text) {
           const suggestion = await brain.generateDMBasedSuggestion(
             recentMessages, foodHistory, result, session.group_id
           );
-          setTimeout(async () => {
-            if (typeof suggestion === 'string') {
-              await kanji.sendToGroupForce(session.group_id, suggestion);
-            } else {
-              // Flex Message → pushMessage
-              await lineClient.pushMessage({ to: session.group_id, messages: [suggestion] });
-            }
-          }, 2000);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          if (typeof suggestion === 'string') {
+            await kanji.sendToGroupForce(session.group_id, suggestion);
+          } else {
+            await lineClient.pushMessage({ to: session.group_id, messages: [suggestion] });
+          }
         }
       } else {
         await lineClient.replyMessage({
@@ -681,7 +679,7 @@ app.post('/test/simulate', express.json(), async (req, res) => {
   try {
     // シークレット認証
     const { groupId, userId, message, secret } = req.body;
-    if (secret !== process.env.TEST_SECRET) {
+    if (!process.env.TEST_SECRET || secret !== process.env.TEST_SECRET) {
       return res.status(401).json({ error: 'unauthorized' });
     }
     
