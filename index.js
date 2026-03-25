@@ -233,6 +233,18 @@ async function handleEvent(event) {
         return;
       }
 
+      // 予約リンクリクエスト検出（直前の提案の予約URLを返す）
+      if (/そこ予約|予約できる|予約したい|予約リンク|予約URL/.test(text)) {
+        const recentBotMsgs = await memory.getRecentMessages(groupId, 10);
+        const lastBotFlex = recentBotMsgs.find(m => m.display_name === 'Kanpai' && m.message.includes('見つけたよ'));
+        // 直前のFlex提案があった場合、予約を促す応答
+        await lineClient.replyMessage({
+          replyToken: event.replyToken,
+          messages: [{ type: 'text', text: 'さっき提案したお店のカードにある「コース予約はこちら」ボタンから予約できるよ📋✨ カードをもう一度見てみて！' }]
+        });
+        return;
+      }
+
       // 個別DM収集トリガー（食事トリガーより先にチェック）
       const dmTriggers = [
         '本音で', 'みんなに聞いて', 'こっそり聞いて', '個別に聞いて', 'みんなの希望',
@@ -522,7 +534,7 @@ async function handleFoodSuggestion(event, groupId) {
     const recentText = recentMessages.slice(-5).map(m => m.message).join(' ');
     const currentMessage = recentMessages[recentMessages.length - 1]?.message || '';
 
-    // ユーザーの直近メッセージから検索オプション抽出（ランチ・個室・大人数）
+    // ユーザーの直近メッセージから検索オプション抽出（ランチ・個室・大人数・デート等）
     const searchOptions = search.extractSearchOptions(currentMessage + ' ' + recentText);
 
     // ジャンル推定: 直近メッセージを優先
@@ -535,24 +547,24 @@ async function handleFoodSuggestion(event, groupId) {
     // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食(ランチ向け)に変更
     const effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1' : genreGuess;
 
-    // エリアがある場合は必ずHotPepper検索を試みる
-    if (area) {
-      try {
-        const restaurants = await search.searchRestaurants(effectiveGenre, budgetGuess, area, 3, searchOptions);
-        if (restaurants && restaurants.length > 0) {
-          const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area);
-          if (flexMsg) {
-            await lineClient.replyMessage({
-              replyToken: event.replyToken,
-              messages: [flexMsg]
-            });
-            await memory.updateLastBotMessage(groupId);
-            return;
-          }
+    // エリアがある場合 or 具体的な条件がある場合はHotPepper検索を試みる
+    // エリアなしでも東京をデフォルトにして検索（応答なし防止）
+    const searchArea = area || '東京';
+    try {
+      const restaurants = await search.searchRestaurants(effectiveGenre, budgetGuess, searchArea, 3, searchOptions);
+      if (restaurants && restaurants.length > 0) {
+        const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, searchOptions);
+        if (flexMsg) {
+          await lineClient.replyMessage({
+            replyToken: event.replyToken,
+            messages: [flexMsg]
+          });
+          await memory.updateLastBotMessage(groupId);
+          return;
         }
-      } catch (searchErr) {
-        console.warn('handleFoodSuggestion: search failed, fallback to AI', searchErr.message);
       }
+    } catch (searchErr) {
+      console.warn('handleFoodSuggestion: search failed, fallback to AI', searchErr.message);
     }
 
     // フォールバック: LLMによるテキスト提案

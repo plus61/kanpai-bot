@@ -120,8 +120,10 @@ async function generateFoodSuggestion(recentMessages, foodHistory, memberCount) 
     const isVague = /なんか|いい感じ|どこでも|なんでも|おまかせ|適当/.test(latestUserMsg);
     const hasArea = /渋谷|新宿|六本木|銀座|池袋|品川|恵比寿|中目黒|表参道|梅田|難波|横浜|名古屋|京都|博多|駅/.test(chatText);
     const hasCount = /\d+人|何人|大人数|少人数|2人|3人|4人|5人/.test(chatText);
+    // 具体的な条件がある場合はvagueとみなさない（デート、大人数、食制限など）
+    const hasSpecificCondition = /デート|カップル|記念日|誕生日|接待|ベジタリアン|ヴィーガン|アレルギー|チェーン|個人店|大人数|個室|\d+人/.test(latestUserMsg);
 
-    if (isVague && (!hasArea || !hasCount)) {
+    if (isVague && !hasSpecificCondition && (!hasArea || !hasCount)) {
       const missing = [];
       if (!hasArea) missing.push('エリア（渋谷・新宿など）');
       if (!hasCount) missing.push('人数');
@@ -184,8 +186,9 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
     const chatText = recentMessages.slice(-10).map(m => m.message).join(' ');
     const hasArea = /渋谷|新宿|六本木|銀座|池袋|品川|恵比寿|中目黒|表参道|梅田|難波|横浜|名古屋|京都|博多|駅/.test(chatText);
     const hasCount = /\d+人|何人|大人数|少人数/.test(chatText);
+    const hasSpecificCondition = /デート|カップル|記念日|誕生日|接待|ベジタリアン|ヴィーガン|アレルギー|チェーン|個人店|大人数|個室|\d+人/.test(userMessage);
 
-    if (isVague && (!hasArea || !hasCount)) {
+    if (isVague && !hasSpecificCondition && (!hasArea || !hasCount)) {
       const missing = [];
       if (!hasArea) missing.push('エリア');
       if (!hasCount) missing.push('人数');
@@ -306,7 +309,7 @@ ${resultText}
 async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult, groupId = '') {
   try {
     const budgetMap = { '1': '〜2,000円', '2': '〜4,000円', '3': '〜6,000円', '4': '6,000円〜' };
-    const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': 'なんでも' };
+    const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': 'なんでも', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
 
     const budgetText = budgetMap[dmResult.budget] || '未定';
     const genreText = genreMap[dmResult.genre] || 'なんでも';
@@ -520,9 +523,12 @@ function guessGenreFromMessages(messages) {
  */
 function guessGenreFromText(text) {
   if (/焼肉|ホルモン|BBQ|バーベキュー|焼き肉/.test(text)) return '4';
-  if (/ラーメン|らーめん|拉麺|中華|餃子|チャーハン|担々麺|つけ麺/.test(text)) return '3';
-  if (/イタリアン|パスタ|ピザ|フレンチ|洋食|ステーキ|ハンバーグ|ステーキのどん/.test(text)) return '2';
+  if (/中華|餃子|チャーハン|担々麺|麻婆|小籠包|点心|春巻/.test(text)) return '3';
+  if (/ラーメン|らーめん|拉麺|つけ麺/.test(text)) return '6';
+  if (/イタリアン|パスタ|ピザ|フレンチ/.test(text)) return '7';
+  if (/洋食|ステーキ|ハンバーグ/.test(text)) return '2';
   if (/寿司|すし|天ぷら|蕎麦|うどん|和食|割烹|刺身|鍋|しゃぶしゃぶ|もんじゃ|もつ鍋|たこ焼き|磯丸/.test(text)) return '1';
+  if (/カフェ|スイーツ|ケーキ|デザート|パンケーキ/.test(text)) return '8';
   if (/カレー|インド|エスニック|タイ|居酒屋|飲み|飲もう|鳥貴族|串カツ|酒場|バル/.test(text)) return '5';
   return null;
 }

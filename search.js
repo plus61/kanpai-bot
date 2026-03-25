@@ -20,11 +20,14 @@ const PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
 // ジャンルコード → Hotpepper genre_cd
 const HOTPEPPER_GENRE = {
-  '1': 'G004',  // 和食
-  '2': 'G005',  // 洋食
-  '3': 'G013',  // ラーメン（G007=中華より精度高）
+  '1': 'G001',  // 和食（居酒屋含む和食系）
+  '2': 'G002',  // 洋食
+  '3': 'G004',  // 中華
   '4': 'G008',  // 焼肉・ホルモン
   '5': 'G001',  // 居酒屋（なんでも）
+  '6': 'G013',  // ラーメン
+  '7': 'G003',  // イタリアン・フレンチ
+  '8': 'G014',  // カフェ・スイーツ
 };
 
 // 予算 → Hotpepper budget (コード)
@@ -128,13 +131,18 @@ async function searchHotpepper(genre, budget, area, limit = 3, options = {}) {
   try {
     const genreCode = HOTPEPPER_GENRE[genre] || 'G001';
     const budgetCode = HOTPEPPER_BUDGET[budget] || 'B006';
-    const keyword = encodeURIComponent(getAreaKeyword(area));
+
+    // キーワードに特殊条件を追加
+    const extraKeywords = (options.keywords || []).join(' ');
+    const fullKeyword = encodeURIComponent(
+      [getAreaKeyword(area), extraKeywords].filter(Boolean).join(' ')
+    );
 
     // ジャンルコードで絞り込み（keywordにジャンル名を混ぜると件数0になりやすい）
     // ※ budget は B* コードで指定すること（d* コードは0件になる）
     let url = `https://webservice.recruit.co.jp/hotpepper/gourmet/v1/` +
       `?key=${HOTPEPPER_KEY}` +
-      `&keyword=${keyword}` +
+      `&keyword=${fullKeyword}` +
       `&genre=${genreCode}` +
       `&budget=${budgetCode}` +
       `&count=${limit}` +
@@ -293,17 +301,39 @@ function extractBudget(text) {
 }
 
 /**
- * テキストから検索オプションを抽出（ランチ・個室・大人数）
+ * テキストから検索オプションを抽出（ランチ・個室・大人数・デート・ベジタリアン等）
  */
 function extractSearchOptions(text) {
   const options = {};
-  if (/ランチ|昼ごはん|昼飯|お昼/.test(text)) options.lunch = true;
+
+  // ランチ: キーワード or 時間帯（11:00〜14:00）
+  if (/ランチ|昼ごはん|昼飯|お昼|昼食/.test(text)) options.lunch = true;
+  const timeMatch = text.match(/(\d{1,2})時/);
+  if (timeMatch) {
+    const hour = parseInt(timeMatch[1]);
+    if (hour >= 11 && hour <= 14) options.lunch = true;
+  }
+
+  // 個室: 直接指定 or デート系
   if (/個室|プライベート/.test(text)) options.privateRoom = true;
-  const partyMatch = text.match(/(\d+)人以上|(\d+)名以上/);
+  if (/デート|カップル|2人で|二人で|記念日|誕生日/.test(text)) options.privateRoom = true;
+
+  // 大人数: N人以上 or N人で（10人以上）
+  const partyMatch = text.match(/(\d+)人(以上|で入|で食|くらい)?|(\d+)名(以上)?/);
   if (partyMatch) {
-    const n = parseInt(partyMatch[1] || partyMatch[2]);
+    const n = parseInt(partyMatch[1] || partyMatch[3]);
     if (n >= 10) options.partyCapacity = n;
   }
+  if (/大人数|大勢|大きい(店|お店)|広い(店|お店)/.test(text)) options.partyCapacity = 10;
+
+  // キーワード検索用（HotPepper keyword に追加する特殊条件）
+  const keywords = [];
+  if (/ベジタリアン|ヴィーガン|菜食|野菜/.test(text)) keywords.push('ベジタリアン');
+  if (/グルテンフリー/.test(text)) keywords.push('グルテンフリー');
+  if (/チェーン(店)?じゃない|個人店|こだわり/.test(text)) keywords.push('こだわり');
+  if (/おしゃれ|雰囲気|いい感じ/.test(text)) keywords.push('おしゃれ');
+  if (keywords.length > 0) options.keywords = keywords;
+
   return options;
 }
 
