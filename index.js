@@ -237,10 +237,14 @@ async function handleEvent(event) {
       if (/そこ予約|予約できる|予約したい|予約リンク|予約URL/.test(text)) {
         const recentBotMsgs = await memory.getRecentMessages(groupId, 10);
         const lastBotFlex = recentBotMsgs.find(m => m.display_name === 'Kanpai' && m.message.includes('見つけたよ'));
-        // 直前のFlex提案があった場合、予約を促す応答
+        // 直前のFlex提案があった場合、予約を促す応答+HotPepperリンク
+        const hotpepperLink = 'https://www.hotpepper.jp/';
         await lineClient.replyMessage({
           replyToken: event.replyToken,
-          messages: [{ type: 'text', text: 'さっき提案したお店のカードにある「コース予約はこちら」ボタンから予約できるよ📋✨ カードをもう一度見てみて！' }]
+          messages: [
+            { type: 'text', text: 'さっき提案したお店のカードにある「コース予約はこちら」ボタンから予約できるよ📋✨ カードをもう一度見てみて！' },
+            { type: 'text', text: `🔗 HotPepperで直接探すならこちら:\n${hotpepperLink}` },
+          ]
         });
         return;
       }
@@ -300,6 +304,8 @@ async function handleEvent(event) {
         '焼肉', '中華', 'ラーメン', '寿司', 'イタリアン', '和食', '洋食',
         '居酒屋', '焼き鳥', '鍋', 'しゃぶ', 'カレー',
         '食べたい', '行きたい', '食いたい',
+        // S24: 再提案系
+        '提案して', '違う提案',
         'この辺', 'この辺で', 'そこ予約',
         // S16: デート・雰囲気系
         'デート', 'いい感じ', '雰囲気', 'おしゃれ', 'カップル', '2人で',
@@ -601,7 +607,8 @@ async function handleFoodSuggestion(event, groupId) {
           if (area) parts.push(`${area}エリア`);
           if (genreGuess !== '5') parts.push(genreMap[effectiveGenre] || '');
           if (currentOptions.lunch) parts.push('ランチ');
-          if (budgetGuess !== '2') parts.push(budgetMap[budgetGuess] || '');
+          // 予算は常に表示（ユーザーに予算感を伝える）
+          if (budgetGuess && budgetMap[budgetGuess]) parts.push(budgetMap[budgetGuess]);
           if (currentOptions.privateRoom || /個室/.test(currentMessage)) parts.push('個室あり');
           if (currentOptions.partyCapacity) parts.push(`${currentOptions.partyCapacity}人以上OK`);
           if (currentOptions.keywords?.length > 0) parts.push(currentOptions.keywords.join('・'));
@@ -632,16 +639,33 @@ async function handleFoodSuggestion(event, groupId) {
     const memberCount = Math.max(2, new Set(recentMessages.map(m => m.display_name)).size);
     let suggestion;
     if (genreGuess && genreGuess !== '5') {
-      // ユーザーが特定ジャンルを指定 → generateFreeResponseでKANPAI_SYSTEMに従って応答
       suggestion = await brain.generateFreeResponse(recentMessages, currentMessage, 'ユーザー');
     } else {
-      // ジャンル不明 → 通常のジャンル提案
       suggestion = await brain.generateFoodSuggestion(recentMessages, foodHistory, memberCount);
+    }
+
+    // Flex返却の場合はそのまま送信
+    if (typeof suggestion !== 'string') {
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: [suggestion]
+      });
+      await memory.updateLastBotMessage(groupId);
+      return;
+    }
+
+    // テキスト提案にHotPepper検索リンクを付加（link-required対応）
+    const searchKeyword = encodeURIComponent(area || '東京');
+    const hotpepperUrl = `https://www.hotpepper.jp/SA12/lst/?keyword=${searchKeyword}`;
+    const messages = [{ type: 'text', text: suggestion }];
+    // 条件が具体的な場合はHotPepper検索リンクも追加
+    if (/教えて|ある[？?]|ない[？?]|探して|行きたい|食べたい|奮発|記念日|接待|デート|飲める|個室/.test(currentMessage)) {
+      messages.push({ type: 'text', text: `🔗 HotPepperでもっと探す:\n${hotpepperUrl}` });
     }
 
     await lineClient.replyMessage({
       replyToken: event.replyToken,
-      messages: [{ type: 'text', text: suggestion }]
+      messages,
     });
 
     await memory.updateLastBotMessage(groupId);
