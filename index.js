@@ -614,6 +614,12 @@ async function handleFoodSuggestion(event, groupId) {
           if (currentOptions.keywords?.length > 0) parts.push(currentOptions.keywords.join('・'));
           if (/深夜/.test(currentMessage)) parts.push('深夜営業');
           if (/駅近/.test(currentMessage)) parts.push('駅近');
+          if (/苦手|嫌い|NG|ダメ/.test(currentMessage)) {
+            const dislike = currentMessage.match(/(魚|肉|辛い|生もの|乳製品|卵|小麦)/);
+            if (dislike) parts.push(`${dislike[1]}以外`);
+          }
+          if (/接待/.test(currentMessage)) parts.push('接待向き');
+          if (/1時間|時間以内|急ぎ/.test(currentMessage)) parts.push('回転早め');
           const conditionText = parts.filter(Boolean).join('・');
           const preamble = conditionText
             ? `${conditionText}で探したよ🔍`
