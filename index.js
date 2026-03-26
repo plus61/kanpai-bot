@@ -567,7 +567,14 @@ async function handleFoodSuggestion(event, groupId) {
     // ジャンル推定: 直近メッセージを優先
     const genreGuess = brain.guessGenreFromMessages(recentMessages.slice(-5)) || '5';
     // 予算: 現在のメッセージを優先、なければ直近2件のみ参照（古い予算が混入しないように）
+    // キーワードベースの予算推定（金額明示なしの場合）
+    const inferBudgetFromKeywords = (text) => {
+      if (/安く|安い|激安|コスパ|格安/.test(text)) return '1';
+      if (/奮発|高級|記念日|接待|特別/.test(text)) return '4';
+      return null;
+    };
     const budgetGuess = search.extractBudget(currentMessage)
+      || inferBudgetFromKeywords(currentMessage)
       || search.extractBudget(recentMessages.slice(-2).map(m => m.message).join(' '))
       || '2';
 
@@ -582,9 +589,28 @@ async function handleFoodSuggestion(event, groupId) {
       if (restaurants && restaurants.length > 0) {
         const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, searchOptions);
         if (flexMsg) {
+          // ユーザーの条件を反映した導入テキストを生成
+          const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
+          const budgetMap = { '1': '〜2,000円', '2': '〜4,000円', '3': '〜6,000円', '4': '6,000円〜' };
+          const parts = [];
+          if (area) parts.push(`${area}エリア`);
+          if (genreGuess !== '5') parts.push(genreMap[effectiveGenre] || '');
+          if (searchOptions.lunch) parts.push('ランチ');
+          if (budgetGuess !== '2') parts.push(budgetMap[budgetGuess] || '');
+          if (searchOptions.privateRoom) parts.push('個室あり');
+          if (searchOptions.partyCapacity) parts.push(`${searchOptions.partyCapacity}人以上OK`);
+          if (searchOptions.keywords?.length > 0) parts.push(searchOptions.keywords.join('・'));
+          const conditionText = parts.filter(Boolean).join('・');
+          const preamble = conditionText
+            ? `${conditionText}で探したよ🔍`
+            : 'おすすめ見つけたよ🔍';
+
           await lineClient.replyMessage({
             replyToken: event.replyToken,
-            messages: [flexMsg]
+            messages: [
+              { type: 'text', text: preamble },
+              flexMsg,
+            ]
           });
           await memory.updateLastBotMessage(groupId);
           return;
