@@ -585,21 +585,28 @@ async function handleFoodSuggestion(event, groupId) {
     // エリアなしでも東京をデフォルトにして検索（応答なし防止）
     const searchArea = area || '東京';
     try {
-      const restaurants = await search.searchRestaurants(effectiveGenre, budgetGuess, searchArea, 3, searchOptions);
+      let restaurants = await search.searchRestaurants(effectiveGenre, budgetGuess, searchArea, 3, searchOptions);
+      // 高額帯で結果がない場合、一段下の予算でリトライ
+      if ((!restaurants || restaurants.length === 0) && budgetGuess === '4') {
+        restaurants = await search.searchRestaurants(effectiveGenre, '3', searchArea, 3, searchOptions);
+      }
       if (restaurants && restaurants.length > 0) {
         const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, searchOptions);
         if (flexMsg) {
-          // ユーザーの条件を反映した導入テキストを生成
+          // ユーザーの条件を反映した導入テキストを生成（currentMessageのみから抽出）
           const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
           const budgetMap = { '1': '〜2,000円', '2': '〜4,000円', '3': '〜6,000円', '4': '6,000円〜' };
+          const currentOptions = search.extractSearchOptions(currentMessage);
           const parts = [];
           if (area) parts.push(`${area}エリア`);
           if (genreGuess !== '5') parts.push(genreMap[effectiveGenre] || '');
-          if (searchOptions.lunch) parts.push('ランチ');
+          if (currentOptions.lunch) parts.push('ランチ');
           if (budgetGuess !== '2') parts.push(budgetMap[budgetGuess] || '');
-          if (searchOptions.privateRoom) parts.push('個室あり');
-          if (searchOptions.partyCapacity) parts.push(`${searchOptions.partyCapacity}人以上OK`);
-          if (searchOptions.keywords?.length > 0) parts.push(searchOptions.keywords.join('・'));
+          if (currentOptions.privateRoom || /個室/.test(currentMessage)) parts.push('個室あり');
+          if (currentOptions.partyCapacity) parts.push(`${currentOptions.partyCapacity}人以上OK`);
+          if (currentOptions.keywords?.length > 0) parts.push(currentOptions.keywords.join('・'));
+          if (/深夜/.test(currentMessage)) parts.push('深夜営業');
+          if (/駅近/.test(currentMessage)) parts.push('駅近');
           const conditionText = parts.filter(Boolean).join('・');
           const preamble = conditionText
             ? `${conditionText}で探したよ🔍`

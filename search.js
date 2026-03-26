@@ -289,6 +289,17 @@ function extractArea(messages) {
  * 「3000円以内」「〜4000円」などをHotpepperコードに変換
  */
 function extractBudget(text) {
+  // 万円パターンを先にチェック（1万、2万、1.5万 等）
+  const manMatch = text.match(/([\d.]+)万円?/);
+  if (manMatch) {
+    const amount = parseFloat(manMatch[1]) * 10000;
+    if (!isNaN(amount)) {
+      if (amount <= 2000) return '1';
+      if (amount <= 4000) return '2';
+      if (amount <= 6000) return '3';
+      return '4';
+    }
+  }
   // 数値＋円パターンを抽出
   const match = text.match(/([\d,]+)円/);
   if (!match) return null;
