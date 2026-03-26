@@ -54,7 +54,12 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 
 【応答の具体性】
 - 曖昧な質問（「何食べようかな」「安くて美味しいとこ」）には気軽に1〜2ジャンルを提案するか、軽く質問する
-- 具体的な条件がある質問には具体的な店舗やジャンルを提案する`;
+- 具体的な条件がある質問には具体的な店舗やジャンルを提案する
+
+【ランチ vs 夜の使い分け】
+- ユーザーが「飲める店」「一杯やろう」「居酒屋」と言ったら居酒屋・バー系を提案する（ランチレストランはNG）
+- ユーザーが「ランチ」「昼」と言ったら夜向けの居酒屋を提案しない
+- 夕方以降のリクエストはデフォルトでディナー向けの店を提案する`;
 
 /**
  * メッセージが食事・飲食に関するかチェックし、食べたものを抽出
@@ -193,6 +198,38 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       if (!hasArea) missing.push('エリア');
       if (!hasCount) missing.push('人数');
       return `いいね！${missing.join('と')}教えてくれたら探すよ😊`;
+    }
+
+    // ユーザーが明示的な条件を持っている場合、検索して具体的な店を返す
+    const conditions = extractRequestConditions(userMessage, recentMessages);
+    const hasExplicitRequest = conditions.genre || conditions.budget || conditions.mealtime;
+
+    if (hasExplicitRequest && !isDifferentRequest) {
+      const searchArea = conditions.area || '東京';
+      const searchBudget = conditions.budget || '2';
+      let searchGenre = conditions.genre || '5';
+      const searchOptions = conditions.options || {};
+
+      // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食に変更
+      if (conditions.mealtime === 'lunch' && searchGenre === '5') {
+        searchGenre = '1';
+        searchOptions.lunch = true;
+      }
+      // 夜/飲み系はランチフィルタを外す
+      if (conditions.mealtime === 'dinner') {
+        delete searchOptions.lunch;
+      }
+
+      try {
+        const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, 3, searchOptions);
+        if (restaurants && restaurants.length > 0) {
+          const { buildRestaurantCarousel } = require('./flex');
+          const flexMsg = buildRestaurantCarousel(restaurants, searchGenre, searchBudget, conditions.area || null, '');
+          if (flexMsg) return flexMsg;
+        }
+      } catch (e) {
+        console.warn('generateFreeResponse search failed, falling back to AI:', e.message);
+      }
     }
 
     // S24: 前回提案を明示的にsystemに伝える
@@ -463,13 +500,23 @@ async function generateProactiveApproach(context, recentMessages, groupId = '') 
     // 直近3メッセージのみからジャンル推定（直近優先で古い文脈を引きずらない）
     const genreGuess = guessGenreFromMessages(recentMessages.slice(-3));
 
+    // 予算を会話から動的に抽出（ハードコード '2' を廃止）
+    const budgetGuess = extractBudgetFromMessages(recentMessages.slice(-5)) || '2';
+
+    // ランチ検出
+    const recentText = recentMessages.slice(-3).map(m => m.message).join(' ');
+    const searchOptions = search.extractSearchOptions(recentText);
+
+    // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食に変更
+    const effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1' : genreGuess;
+
     // お店検索（エリアが判明している場合）→ Flex優先、fallbackにテキスト
-    if (area && genreGuess) {
-      const restaurants = await search.searchRestaurants(genreGuess, '2', area, 3);
+    if (area && effectiveGenre) {
+      const restaurants = await search.searchRestaurants(effectiveGenre, budgetGuess, area, 3, searchOptions);
       if (restaurants && restaurants.length > 0) {
         // Flex Messageオブジェクトを返す（index.jsで判定してreplyMessage）
         const { buildRestaurantCarousel } = require('./flex');
-        const flexMsg = buildRestaurantCarousel(restaurants, genreGuess, '2', area, groupId);
+        const flexMsg = buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area, groupId);
         if (flexMsg) return flexMsg; // オブジェクト返却
       }
     }
@@ -529,8 +576,58 @@ function guessGenreFromText(text) {
   if (/洋食|ステーキ|ハンバーグ/.test(text)) return '2';
   if (/寿司|すし|天ぷら|蕎麦|うどん|和食|割烹|刺身|鍋|しゃぶしゃぶ|もんじゃ|もつ鍋|たこ焼き|磯丸/.test(text)) return '1';
   if (/カフェ|スイーツ|ケーキ|デザート|パンケーキ/.test(text)) return '8';
-  if (/カレー|インド|エスニック|タイ|居酒屋|飲み|飲もう|鳥貴族|串カツ|酒場|バル/.test(text)) return '5';
+  if (/カレー|インド|エスニック|タイ/.test(text)) return '5';
+  // 居酒屋・飲み系は独立して検出（カレー等と分離）
+  if (/居酒屋|飲み|飲もう|飲める|bar|バー|酒|乾杯|一杯|串カツ|焼き鳥|鳥貴族|やきとり|串焼き|酒場|バル/.test(text)) return '5';
   return null;
+}
+
+/**
+ * メッセージリストから予算コードを抽出（直近メッセージ優先）
+ */
+function extractBudgetFromMessages(messages) {
+  const orderedMessages = messages.slice().reverse();
+  for (const msg of orderedMessages) {
+    const budget = search.extractBudget(msg.message);
+    if (budget) return budget;
+  }
+  return null;
+}
+
+/**
+ * ユーザーメッセージから検索条件を抽出
+ */
+function extractRequestConditions(userMessage, chatHistory) {
+  const text = userMessage;
+  const conditions = {};
+
+  // エリア
+  conditions.area = search.extractArea([{ message: text }]);
+  if (!conditions.area && chatHistory) {
+    conditions.area = search.extractArea(chatHistory);
+  }
+
+  // 予算
+  conditions.budget = search.extractBudget(text);
+  if (!conditions.budget && chatHistory) {
+    conditions.budget = extractBudgetFromMessages(chatHistory.slice(-3));
+  }
+
+  // ジャンル
+  conditions.genre = guessGenreFromText(text);
+
+  // 検索オプション
+  conditions.options = search.extractSearchOptions(text);
+
+  // 時間帯
+  if (/ランチ|昼/.test(text)) conditions.mealtime = 'lunch';
+  else if (/ディナー|夜|今夜|夕食|飲み|飲もう|飲める|一杯/.test(text)) conditions.mealtime = 'dinner';
+
+  // 人数
+  const countMatch = text.match(/(\d+)人/);
+  if (countMatch) conditions.count = parseInt(countMatch[1]);
+
+  return conditions;
 }
 
 module.exports = {
@@ -544,4 +641,6 @@ module.exports = {
   generateProactiveApproach,
   guessGenreFromText,
   guessGenreFromMessages,
+  extractBudgetFromMessages,
+  extractRequestConditions,
 };
