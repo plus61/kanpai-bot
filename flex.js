@@ -221,9 +221,11 @@ function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '',
     buildShopBubble(shop, i, genre, groupId, budget, area)
   );
 
+  // altTextに店名を含めて応答の具体性を高める
+  const shopNames = restaurants.slice(0, 3).map(s => s.name).join('、');
   return {
     type: 'flex',
-    altText: `${areaText}の${mealTypeText}（${budgetText}）を${restaurants.length}件見つけたよ🍻`,
+    altText: `${areaText}の${mealTypeText}（${budgetText}）を${restaurants.length}件見つけたよ🍻\n${shopNames}\n詳細はカードをチェック！`,
     contents: {
       type: 'carousel',
       contents: bubbles,

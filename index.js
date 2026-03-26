@@ -258,12 +258,39 @@ async function handleEvent(event) {
         return;
       }
 
+      // ソフトシグナル検出（「何食べようかな」「お腹すいた」→ 軽い提案 or 質問返し）
+      const isSoftSignal = /何食べ(よう|たい)?かな|お腹すいた|お腹空いた|腹減った|腹へった/.test(text);
+      const isExplicitRequest = /教えて|ある[？?]|ない[？?]|行きたい|食べたい|探して|予約|おすすめ/.test(text);
+      if (isSoftSignal && !isExplicitRequest) {
+        const recentMessages = await memory.getRecentMessages(groupId, 10);
+        const response = await brain.generateFreeResponse(recentMessages, text, displayName);
+        if (typeof response === 'string') {
+          await lineClient.replyMessage({
+            replyToken: event.replyToken,
+            messages: [{ type: 'text', text: response }]
+          });
+        } else {
+          await lineClient.replyMessage({
+            replyToken: event.replyToken,
+            messages: [response]
+          });
+        }
+        await memory.updateLastBotMessage(groupId);
+        return;
+      }
+
       // 食事提案のトリガーワード
       const foodTriggers = [
         '何食べる', 'なに食べる', 'どこ行く', 'ご飯', '飯どこ',
-        'なに食べ', 'お腹すいた', 'おすすめ', 'オススメ', 'おすすめある',
+        'なに食べ', '何食べ', 'お腹すいた', 'おすすめ', 'オススメ', 'おすすめある',
         '何がいい', 'どこがいい', 'どこ食べ', '飯どうする', 'めし',
         'ランチ', 'ディナー', '夜ごはん', '昼ごはん',
+        // S04: 飲み系
+        '飲める', '飲み', '飲もう', '一杯',
+        // S18: 時間制約
+        '食べ終われる', '時間以内',
+        // S23: 深夜
+        '深夜', '開いてる', '開いてるとこ',
         // 追加: 曖昧・条件系（S09-S15対応）
         '安くて', '安い', '奮発', '記念日', '特別な', '予約',
         '他にある', '他ある', '他は', '別の',
