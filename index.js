@@ -585,7 +585,11 @@ async function handleFoodSuggestion(event, groupId) {
       || '2';
 
     // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食(ランチ向け)に変更
-    const effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1' : genreGuess;
+    // S10/S20: 接待・奮発・記念日でジャンルが居酒屋の場合は和食（懐石系）に変更
+    const isHighEnd = /接待|奮発|記念日/.test(currentMessage);
+    const effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1'
+      : (isHighEnd && genreGuess === '5') ? '1'
+      : genreGuess;
 
     // エリアがある場合 or 具体的な条件がある場合はHotPepper検索を試みる
     // エリアなしでも東京をデフォルトにして検索（応答なし防止）
@@ -607,8 +611,15 @@ async function handleFoodSuggestion(event, groupId) {
           if (area) parts.push(`${area}エリア`);
           if (genreGuess !== '5') parts.push(genreMap[effectiveGenre] || '');
           if (currentOptions.lunch) parts.push('ランチ');
-          // 予算は常に表示（ユーザーに予算感を伝える）
-          if (budgetGuess && budgetMap[budgetGuess]) parts.push(budgetMap[budgetGuess]);
+          // S04: ユーザーが明示した予算があればそのまま表示（「3000円」→「3,000円以内」）
+          const userBudgetMatch = currentMessage.match(/([\d,]+)円/);
+          if (userBudgetMatch) {
+            parts.push(`${userBudgetMatch[1]}円以内`);
+          } else if (/奮発|高級|記念日|接待/.test(currentMessage)) {
+            parts.push(budgetMap[budgetGuess] || '');
+          } else if (budgetGuess && budgetMap[budgetGuess]) {
+            parts.push(budgetMap[budgetGuess]);
+          }
           if (currentOptions.privateRoom || /個室/.test(currentMessage)) parts.push('個室あり');
           if (currentOptions.partyCapacity) parts.push(`${currentOptions.partyCapacity}人以上OK`);
           if (currentOptions.keywords?.length > 0) parts.push(currentOptions.keywords.join('・'));
