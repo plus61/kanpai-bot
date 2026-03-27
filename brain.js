@@ -202,9 +202,31 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
 
     // ユーザーが明示的な条件を持っている場合、検索して具体的な店を返す
     const conditions = extractRequestConditions(userMessage, recentMessages);
-    const hasExplicitRequest = conditions.genre || conditions.budget || conditions.mealtime;
+    // S21: キーワード条件（チェーン店じゃない等）もexplicit requestとみなす
+    const hasKeywordCondition = conditions.options && conditions.options.keywords && conditions.options.keywords.length > 0;
+    const hasExplicitRequest = conditions.genre || conditions.budget || conditions.mealtime || hasKeywordCondition;
 
-    if (hasExplicitRequest && !isDifferentRequest) {
+    // S14/S24: 「他にある？」「さっきと違う」→ 前回と異なるジャンルで検索
+    if (isDifferentRequest) {
+      const prevGenre = extractPreviousGenre(recentMessages);
+      const searchArea = conditions.area || search.extractArea(recentMessages) || '東京';
+      const searchBudget = conditions.budget || extractBudgetFromMessages(recentMessages.slice(-5)) || '2';
+      // 前回と違うジャンルを選ぶ
+      const allGenres = ['1', '2', '3', '4', '5', '6', '7', '8'];
+      const availableGenres = allGenres.filter(g => g !== prevGenre);
+      const searchGenre = availableGenres[Math.floor(Math.random() * availableGenres.length)] || '1';
+
+      try {
+        const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, 3, conditions.options || {});
+        if (restaurants && restaurants.length > 0) {
+          const { buildRestaurantCarousel } = require('./flex');
+          const flexMsg = buildRestaurantCarousel(restaurants, searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: conditions.budgetLabel });
+          if (flexMsg) return flexMsg;
+        }
+      } catch (e) {
+        console.warn('generateFreeResponse different-request search failed:', e.message);
+      }
+    } else if (hasExplicitRequest) {
       const searchArea = conditions.area || '東京';
       const searchBudget = conditions.budget || '2';
       let searchGenre = conditions.genre || '5';
@@ -224,7 +246,7 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
         const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, 3, searchOptions);
         if (restaurants && restaurants.length > 0) {
           const { buildRestaurantCarousel } = require('./flex');
-          const flexMsg = buildRestaurantCarousel(restaurants, searchGenre, searchBudget, conditions.area || null, '');
+          const flexMsg = buildRestaurantCarousel(restaurants, searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: conditions.budgetLabel });
           if (flexMsg) return flexMsg;
         }
       } catch (e) {
@@ -232,9 +254,11 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       }
     }
 
-    // S24: 前回提案を明示的にsystemに伝える
+    // S24: 前回提案を明示的にsystemに伝える（Flex検索で解決済みの場合はここに来ない）
+    const prevGenreForAI = isDifferentRequest ? extractPreviousGenre(recentMessages) : null;
+    const genreLabel = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
     const extraInstruction = isDifferentRequest
-      ? '\n\n【重要】ユーザーが「さっきと違う」と言っています。直前のassistant発言で提案したジャンル・店・エリアとは必ず異なる提案をしてください。'
+      ? `\n\n【重要】ユーザーが「さっきと違う」と言っています。前回は「${genreLabel[prevGenreForAI] || '不明'}」系を提案しました。必ず異なるジャンル・異なる店を提案してください。`
       : '';
 
     const response = await client.chat.completions.create({
@@ -607,14 +631,33 @@ function extractRequestConditions(userMessage, chatHistory) {
     conditions.area = search.extractArea(chatHistory);
   }
 
-  // 予算
-  conditions.budget = search.extractBudget(text);
+  // S10/S20: 接待・奮発・記念日 → 高予算 + 高級ジャンル（居酒屋NG）
+  if (/接待|ビジネス|奮発|記念日/.test(text)) {
+    conditions.budget = '4';
+    conditions.budgetLabel = '高級店';
+    // 居酒屋(5)以外のジャンルを設定（和食懐石 or イタリアン）
+    if (!guessGenreFromText(text) || guessGenreFromText(text) === '5') {
+      conditions.genre = '1'; // 和食（懐石・割烹系）
+    }
+  }
+
+  // 予算（接待系で未設定の場合のみ）
+  if (!conditions.budget) {
+    conditions.budget = search.extractBudget(text);
+    // S04: ユーザーが明示した金額を表示用に保持
+    const budgetMatch = text.match(/([\d,]+)円/);
+    if (budgetMatch) {
+      conditions.budgetLabel = `${budgetMatch[1]}円以内`;
+    }
+  }
   if (!conditions.budget && chatHistory) {
     conditions.budget = extractBudgetFromMessages(chatHistory.slice(-3));
   }
 
-  // ジャンル
-  conditions.genre = guessGenreFromText(text);
+  // ジャンル（接待系で未設定の場合のみ）
+  if (!conditions.genre) {
+    conditions.genre = guessGenreFromText(text);
+  }
 
   // 検索オプション
   conditions.options = search.extractSearchOptions(text);
@@ -630,6 +673,29 @@ function extractRequestConditions(userMessage, chatHistory) {
   return conditions;
 }
 
+/**
+ * 直前のKanpai発言からジャンルコードを抽出（S14/S24: 前回と違うジャンルを返すため）
+ */
+function extractPreviousGenre(messages) {
+  const botMessages = messages.filter(m => m.display_name === 'Kanpai').slice(-3);
+  for (const msg of botMessages.reverse()) {
+    const text = msg.message || '';
+    // Flex altTextからジャンル検出（例: "渋谷周辺の居酒屋（〜4,000円）"）
+    const genre = guessGenreFromText(text);
+    if (genre) return genre;
+    // ラベルテキストから検出
+    if (/和食|懐石|割烹/.test(text)) return '1';
+    if (/洋食|ステーキ/.test(text)) return '2';
+    if (/中華/.test(text)) return '3';
+    if (/焼肉/.test(text)) return '4';
+    if (/居酒屋/.test(text)) return '5';
+    if (/ラーメン/.test(text)) return '6';
+    if (/イタリアン/.test(text)) return '7';
+    if (/カフェ/.test(text)) return '8';
+  }
+  return '5'; // デフォルト（居酒屋を除外するため）
+}
+
 module.exports = {
   extractFoodFromText,
   generateFoodSuggestion,
@@ -643,4 +709,5 @@ module.exports = {
   guessGenreFromMessages,
   extractBudgetFromMessages,
   extractRequestConditions,
+  extractPreviousGenre,
 };

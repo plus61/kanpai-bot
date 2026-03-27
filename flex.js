@@ -214,7 +214,8 @@ function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '',
 
   const areaText = area ? `${area}周辺` : '周辺';
   const genreText = GENRE_LABEL[genre] || 'お店';
-  const budgetText = BUDGET_LABEL[budget] || '';
+  // S04: ユーザーが明示した予算があればそれを表示（例: "3,000円以内"）
+  const budgetText = options.budgetLabel || BUDGET_LABEL[budget] || '';
   const mealTypeText = options.lunch ? 'ランチ' : genreText;
 
   const bubbles = restaurants.slice(0, 3).map((shop, i) =>
