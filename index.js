@@ -620,14 +620,18 @@ async function handleFoodSuggestion(event, groupId) {
       if ((!restaurants || restaurants.length === 0) && isHighEnd) {
         restaurants = await search.searchRestaurants(effectiveGenre, '2', searchArea, 3, searchOptions);
       }
-      // S10/S20: 結果が少ない場合、イタリアン・フレンチ(7)でも検索して補完
+      // S10/S20: 結果が少ない場合、イタリアン・フレンチ(7)でも検索して補完（キーワード緩和）
       if (isHighEnd && restaurants && restaurants.length < 3) {
-        try {
-          const extraResults = await search.searchRestaurants('7', budgetGuess, searchArea, 3 - restaurants.length, searchOptions);
-          if (extraResults && extraResults.length > 0) {
-            restaurants = restaurants.concat(extraResults).slice(0, 3);
-          }
-        } catch (e) { /* ignore */ }
+        const supplementGenres = ['7', '2']; // イタリアン、洋食
+        for (const sg of supplementGenres) {
+          if (restaurants.length >= 3) break;
+          try {
+            const extraResults = await search.searchRestaurants(sg, budgetGuess, searchArea, 3 - restaurants.length, {});
+            if (extraResults && extraResults.length > 0) {
+              restaurants = restaurants.concat(extraResults).slice(0, 3);
+            }
+          } catch (e) { /* ignore */ }
+        }
       }
       if (restaurants && restaurants.length > 0) {
         // S04: ユーザー明示予算をFlexのaltTextにも反映
