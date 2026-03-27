@@ -601,7 +601,10 @@ async function handleFoodSuggestion(event, groupId) {
         restaurants = await search.searchRestaurants(effectiveGenre, '3', searchArea, 3, searchOptions);
       }
       if (restaurants && restaurants.length > 0) {
-        const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, searchOptions);
+        // S04: ユーザー明示予算をFlexのaltTextにも反映
+        const userBudgetLabel = currentMessage.match(/([\d,]+)円/) ? `${currentMessage.match(/([\d,]+)円/)[1]}円以内` : null;
+        const flexOptions = { ...searchOptions, ...(userBudgetLabel ? { budgetLabel: userBudgetLabel } : {}) };
+        const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, flexOptions);
         if (flexMsg) {
           // ユーザーの条件を反映した導入テキストを生成（currentMessageのみから抽出）
           const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
