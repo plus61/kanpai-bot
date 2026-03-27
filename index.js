@@ -585,11 +585,27 @@ async function handleFoodSuggestion(event, groupId) {
       || '2';
 
     // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食(ランチ向け)に変更
-    // S10/S20: 接待・奮発・記念日でジャンルが居酒屋の場合は和食（懐石系）に変更
+    // S10/S20: 接待・奮発・記念日 → 高級キーワードで検索 + 居酒屋ジャンルを回避
     const isHighEnd = /接待|奮発|記念日/.test(currentMessage);
-    const effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1'
+    let effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1'
       : (isHighEnd && genreGuess === '5') ? '1'
       : genreGuess;
+
+    // S10/S20: 高級検索の場合はキーワードに「高級」「個室」を追加
+    if (isHighEnd) {
+      if (!searchOptions.keywords) searchOptions.keywords = [];
+      if (!searchOptions.keywords.includes('高級')) searchOptions.keywords.push('高級');
+      searchOptions.privateRoom = true;
+    }
+
+    // S14/S24: 「他にある？」「さっきと違う」→ 前回と異なるジャンルで検索
+    const isDifferentRequest = /さっきと違う|別の|他に(ある|ない|は)?|違う(の|店|ところ|提案)|もっと(他|違う)|変えて/.test(currentMessage);
+    if (isDifferentRequest) {
+      const prevGenre = brain.extractPreviousGenre(recentMessages);
+      const allGenres = ['1', '2', '3', '4', '6', '7', '8']; // '5'(居酒屋)も除外候補
+      const availableGenres = allGenres.filter(g => g !== prevGenre);
+      effectiveGenre = availableGenres[Math.floor(Math.random() * availableGenres.length)] || '1';
+    }
 
     // エリアがある場合 or 具体的な条件がある場合はHotPepper検索を試みる
     // エリアなしでも東京をデフォルトにして検索（応答なし防止）
@@ -599,6 +615,10 @@ async function handleFoodSuggestion(event, groupId) {
       // 高額帯で結果がない場合、一段下の予算でリトライ
       if ((!restaurants || restaurants.length === 0) && budgetGuess === '4') {
         restaurants = await search.searchRestaurants(effectiveGenre, '3', searchArea, 3, searchOptions);
+      }
+      // S10/S20: まだ0件の場合、高級キーワード + 予算フィルタなし（'2'）でリトライ
+      if ((!restaurants || restaurants.length === 0) && isHighEnd) {
+        restaurants = await search.searchRestaurants(effectiveGenre, '2', searchArea, 3, searchOptions);
       }
       if (restaurants && restaurants.length > 0) {
         // S04: ユーザー明示予算をFlexのaltTextにも反映
