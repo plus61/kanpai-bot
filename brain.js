@@ -49,16 +49,25 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 
 【コンテキスト保持】
 - 直前の会話でユーザーが言ったことを踏まえて応答する
-- 「さっきと違う提案して」「他にある？」「別の」と言われたら:
+- 「他にある？」「もっと見たい」と言われたら:
+  1. ユーザーが最初にリクエストしたジャンルを確認する（焼肉→焼肉のまま）
+  2. 同じジャンルで異なる店舗を提案する（ジャンルは変えない）
+  3. 前回提案した店名は絶対に再提示しない
+- 「さっきと違う提案して」「別の」「変えて」と言われたら:
   1. 直前にKanpaiが提案した店舗名・ジャンルを確認する
-  2. 必ず異なるジャンルかつ異なる店舗を提案する（同じジャンル・同じ店の再提示は絶対NG）
+  2. 必ず異なるジャンルかつ異なる店舗を提案する
   3. 前回が和食なら洋食・中華・焼肉など明確に違うジャンルから選ぶ
+- 「やっぱ〜で」「〜に変更」「〜以内で」→ 条件変更として処理する
+  1. 変更された条件のみ更新し、他の条件（エリア・ジャンル等）は維持する
+  2. 変更後の条件で具体的な店名とHotPepperリンク付きで再提案する
 - 会話の流れを読んで、既に決まっている情報（エリア・予算・人数）は繰り返し確認しない
 
 【チェーン店・個人店の対応】
 - 「チェーン店じゃない」「個人店がいい」と言われたら、大手チェーン（鳥貴族、磯丸水産、串カツ田中、ワタミ、白木屋、魚民、笑笑、はなの舞、甘太郎、土間土間等）は絶対に提案しない
 - 個人経営・こだわりの店を優先する
 - 店名にチェーン店っぽい特徴（全国展開、フランチャイズ）がある場合は除外する
+- 応答には「個人店だよ！」「チェーンじゃないこだわりの店だよ」等、非チェーンであることを明示する
+- 各店の特徴・おすすめポイントも一言添える（「隠れ家的な雰囲気」「店主こだわりの〜」等）
 
 【応答の具体性】
 - 曖昧な質問（「何食べようかな」「安くて美味しいとこ」）には気軽に1〜2ジャンルを提案するか、軽く質問する
@@ -191,8 +200,11 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       content: `${displayName}: ${userMessage}`
     });
 
-    // S24対応: 「さっきと違う」「他にある？」系のリクエスト検出
-    const isDifferentRequest = /さっきと違う|別の|他に(ある|ない|は)?|違う(の|店|ところ|提案)|もっと(他|違う)|変えて/.test(userMessage);
+    // S14/MT02: 「他にある？」→ 同じジャンルで別の店を提案
+    const isMoreRequest = /他に(ある|ない|は)?[？?]?$|もっと(見|教|出|ある)|他の(店|候補|選択肢)/.test(userMessage);
+    // S24: 「さっきと違う」「別の」→ 異なるジャンルで提案
+    const isDifferentGenreRequest = /さっきと違う|別の(ジャンル|系統|タイプ|やつ)?(?!店|候補|選択肢)|違う(の|店|ところ|提案)|変えて|ガラッと/.test(userMessage) && !isMoreRequest;
+    const isDifferentRequest = isMoreRequest || isDifferentGenreRequest;
 
     // S25対応: 曖昧リクエスト検出
     const isVague = /なんか|いい感じ|どこでも|なんでも|おまかせ|適当/.test(userMessage);
@@ -214,34 +226,63 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
     const hasKeywordCondition = conditions.options && conditions.options.keywords && conditions.options.keywords.length > 0;
     const hasExplicitRequest = conditions.genre || conditions.budget || conditions.mealtime || hasKeywordCondition;
 
-    // S14/S24: 「他にある？」「さっきと違う」→ 前回と異なるジャンルで検索
+    // MT03: 予算・条件変更検出（「やっぱ〜で」「〜に変更」等）
+    const isConditionUpdate = /やっぱ|やっぱり|予算.*変え|に変更|にして[！!]?$|以内で[！!]?$/.test(userMessage) && !isDifferentRequest;
+    // 条件変更時はチャット履歴からジャンル・エリアを補完
+    if (isConditionUpdate && !conditions.genre) {
+      conditions.genre = guessGenreFromMessages(recentMessages.slice(-5).filter(m => m.display_name !== 'Kanpai'));
+    }
+
+    // S14/MT02/S24: 再提案リクエスト処理
     if (isDifferentRequest) {
-      const prevGenres = extractAllPreviousGenres(recentMessages);
       const prevShopNames = extractPreviousShopNames(recentMessages);
       const searchArea = conditions.area || search.extractArea(recentMessages) || '東京';
       const searchBudget = conditions.budget || extractBudgetFromMessages(recentMessages.slice(-5)) || '2';
-      // 前回と違うジャンルを選ぶ（複数の前回ジャンルを全て除外）
-      const allGenres = ['1', '2', '3', '4', '5', '6', '7', '8'];
-      const availableGenres = allGenres.filter(g => !prevGenres.includes(g));
-      const searchGenre = availableGenres[Math.floor(Math.random() * availableGenres.length)] || '1';
+      let searchGenre;
+
+      if (isMoreRequest) {
+        // MT02: 「他にある？」→ ユーザーが求めたジャンルを維持（前回の会話から取得）
+        const userGenre = guessGenreFromMessages(recentMessages.slice(-10).filter(m => m.display_name !== 'Kanpai'));
+        const botGenre = extractPreviousGenre(recentMessages);
+        searchGenre = userGenre || botGenre || '5';
+      } else {
+        // S24: 「さっきと違う提案して」→ 前回と異なるジャンル
+        const prevGenres = extractAllPreviousGenres(recentMessages);
+        const allGenres = ['1', '2', '3', '4', '5', '6', '7', '8'];
+        const availableGenres = allGenres.filter(g => !prevGenres.includes(g));
+        searchGenre = availableGenres[Math.floor(Math.random() * availableGenres.length)] || '1';
+      }
+
+      // S21: チェーン店除外
+      const isAntiChainSearch = /チェーン(店)?じゃない|チェーン以外|個人店|こだわり(の|がある)/.test(userMessage) ||
+        recentMessages.slice(-5).some(m => /チェーン(店)?じゃない|チェーン以外|個人店/.test(m.message));
+      const searchOpts = { ...(conditions.options || {}) };
+      if (isAntiChainSearch) searchOpts.keywords = [...(searchOpts.keywords || []), 'こだわり'];
 
       try {
-        const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, 5, conditions.options || {});
+        const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, 8, searchOpts);
         if (restaurants && restaurants.length > 0) {
           // 前回提案した店名と重複する店を除外
-          const filtered = restaurants.filter(r => !prevShopNames.some(name => r.name && r.name.includes(name)));
+          let filtered = restaurants.filter(r => !prevShopNames.some(name => r.name && r.name.includes(name)));
+          // チェーン店フィルタ
+          if (isAntiChainSearch) {
+            const chainNames = /鳥貴族|磯丸|串カツ田中|ワタミ|白木屋|魚民|笑笑|はなの舞|甘太郎|土間土間|和民|金の蔵|目利きの銀次|山内農場|千年の宴|福福屋|さくら水産|養老乃瀧|日本海庄や|つぼ八|庄や|大庄|モンテローザ|コロワイド/;
+            filtered = filtered.filter(r => !chainNames.test(r.name || ''));
+          }
           const finalResults = filtered.length > 0 ? filtered.slice(0, 3) : restaurants.slice(0, 3);
           const { buildRestaurantCarousel } = require('./flex');
-          const flexMsg = buildRestaurantCarousel(finalResults, searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: conditions.budgetLabel });
+          const label = isAntiChainSearch ? '個人店' : conditions.budgetLabel;
+          const flexMsg = buildRestaurantCarousel(finalResults, searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: label });
           if (flexMsg) return flexMsg;
         }
       } catch (e) {
         console.warn('generateFreeResponse different-request search failed:', e.message);
       }
-    } else if (hasExplicitRequest) {
-      const searchArea = conditions.area || '東京';
-      const searchBudget = conditions.budget || '2';
-      let searchGenre = conditions.genre || '5';
+    } else if (isConditionUpdate || hasExplicitRequest) {
+      const searchArea = conditions.area || search.extractArea(recentMessages) || '東京';
+      const searchBudget = conditions.budget || extractBudgetFromMessages(recentMessages.slice(-5)) || '2';
+      // MT03: ジャンルが不明な場合、会話履歴からユーザーの意図を取得
+      let searchGenre = conditions.genre || guessGenreFromMessages(recentMessages.slice(-5).filter(m => m.display_name !== 'Kanpai')) || '5';
       const searchOptions = conditions.options || {};
 
       // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食に変更
@@ -254,11 +295,16 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
         delete searchOptions.lunch;
       }
 
-      // S21: チェーン店除外リクエスト検出
-      const isAntiChain = /チェーン(店)?じゃない|チェーン以外|個人店|こだわり(の|がある)/.test(userMessage);
+      // S21/MT01: チェーン店除外リクエスト検出（現在のメッセージ + 直近の会話）
+      const isAntiChain = /チェーン(店)?じゃない|チェーン以外|個人店|こだわり(の|がある)/.test(userMessage) ||
+        recentMessages.slice(-5).some(m => /チェーン(店)?じゃない|チェーン以外|個人店/.test(m.message));
+
+      if (isAntiChain) {
+        searchOptions.keywords = [...(searchOptions.keywords || []), 'こだわり'];
+      }
 
       try {
-        const count = isAntiChain ? 6 : 3;
+        const count = isAntiChain ? 8 : 3;
         const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, count, searchOptions);
         if (restaurants && restaurants.length > 0) {
           let results = restaurants;
@@ -269,7 +315,9 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
             if (results.length === 0) results = restaurants;
           }
           const { buildRestaurantCarousel } = require('./flex');
-          const flexMsg = buildRestaurantCarousel(results.slice(0, 3), searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: conditions.budgetLabel });
+          // S21: チェーン店除外時は「個人店」ラベルを表示
+          const label = isAntiChain ? '個人店' : conditions.budgetLabel;
+          const flexMsg = buildRestaurantCarousel(results.slice(0, 3), searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: label });
           if (flexMsg) return flexMsg;
         }
       } catch (e) {
@@ -277,10 +325,11 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       }
     }
 
-    // S24: 前回提案を明示的にsystemに伝える（Flex検索で解決済みの場合はここに来ない）
+    // AI fallback: Flex検索で解決済みの場合はここに来ない
     const genreLabel = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
-    // S21: チェーン店除外指示をAIにも伝える
-    const isAntiChainForAI = /チェーン(店)?じゃない|チェーン以外|個人店|こだわり(の|がある)/.test(userMessage);
+    // チェーン店除外指示（現在のメッセージ + 直近の会話）
+    const isAntiChainForAI = /チェーン(店)?じゃない|チェーン以外|個人店|こだわり(の|がある)/.test(userMessage) ||
+      recentMessages.slice(-5).some(m => /チェーン(店)?じゃない|チェーン以外|個人店/.test(m.message));
 
     let extraInstruction = '';
     if (isDifferentRequest) {
@@ -288,13 +337,30 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       const prevShopNames = extractPreviousShopNames(recentMessages);
       const prevGenreLabels = prevGenres.map(g => genreLabel[g] || '不明').join('・');
       const prevShopList = prevShopNames.length > 0 ? prevShopNames.join('、') : 'なし';
-      extraInstruction = `\n\n【重要】ユーザーが「さっきと違う」「他にある？」と言っています。
+      if (isMoreRequest) {
+        // MT02: 同ジャンルで別の店
+        const userGenre = guessGenreFromMessages(recentMessages.slice(-10).filter(m => m.display_name !== 'Kanpai'));
+        const genreName = genreLabel[userGenre] || '同じジャンル';
+        extraInstruction = `\n\n【重要】ユーザーが「他にある？」と言っています。
+前回提案した店: ${prevShopList}
+ユーザーが求めているジャンル: ${genreName}
+→ 同じ${genreName}ジャンルで、前回と異なる具体的な店名を提案してください。HotPepperリンクも必ず付けてください。`;
+      } else {
+        extraInstruction = `\n\n【重要】ユーザーが「さっきと違う提案して」と言っています。
 前回提案したジャンル: ${prevGenreLabels}
 前回提案した店: ${prevShopList}
-→ 上記のジャンル・店は絶対に使わず、まったく異なるジャンル・異なる店を提案してください。`;
+→ 上記のジャンル・店は絶対に使わず、まったく異なるジャンル・異なる店を提案してください。HotPepperリンクも必ず付けてください。`;
+      }
+    }
+    if (isConditionUpdate) {
+      // MT03: 予算変更等の場合、具体的な店名とリンクを必須にする
+      const updatedBudget = conditions.budget ? `予算: ~${{'1':'2,000','2':'4,000','3':'6,000','4':'10,000'}[conditions.budget] || '?'}円` : '';
+      const updatedArea = conditions.area || search.extractArea(recentMessages) || '';
+      extraInstruction += `\n\n【重要】ユーザーが条件を変更しました。${updatedBudget} ${updatedArea}
+→ 変更後の条件に合う具体的な店名を提案してください。HotPepperリンクも必ず付けてください。架空の店名は禁止です。`;
     }
     if (isAntiChainForAI) {
-      extraInstruction += `\n\n【重要】ユーザーはチェーン店を避けたいと言っています。鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民等の大手チェーンは絶対に提案しないでください。個人経営・こだわりの店のみ提案してください。`;
+      extraInstruction += `\n\n【重要】ユーザーはチェーン店を避けたいと言っています。鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民等の大手チェーンは絶対に提案しないでください。個人経営・こだわりの店のみ提案し、「個人店だよ！」と明示してください。`;
     }
 
     const response = await client.chat.completions.create({
