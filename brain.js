@@ -49,8 +49,16 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 
 【コンテキスト保持】
 - 直前の会話でユーザーが言ったことを踏まえて応答する
-- 「さっきと違う提案して」「他にある？」と言われたら前の提案と重複しない新しい提案をする
+- 「さっきと違う提案して」「他にある？」「別の」と言われたら:
+  1. 直前にKanpaiが提案した店舗名・ジャンルを確認する
+  2. 必ず異なるジャンルかつ異なる店舗を提案する（同じジャンル・同じ店の再提示は絶対NG）
+  3. 前回が和食なら洋食・中華・焼肉など明確に違うジャンルから選ぶ
 - 会話の流れを読んで、既に決まっている情報（エリア・予算・人数）は繰り返し確認しない
+
+【チェーン店・個人店の対応】
+- 「チェーン店じゃない」「個人店がいい」と言われたら、大手チェーン（鳥貴族、磯丸水産、串カツ田中、ワタミ、白木屋、魚民、笑笑、はなの舞、甘太郎、土間土間等）は絶対に提案しない
+- 個人経営・こだわりの店を優先する
+- 店名にチェーン店っぽい特徴（全国展開、フランチャイズ）がある場合は除外する
 
 【応答の具体性】
 - 曖昧な質問（「何食べようかな」「安くて美味しいとこ」）には気軽に1〜2ジャンルを提案するか、軽く質問する
@@ -208,19 +216,23 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
 
     // S14/S24: 「他にある？」「さっきと違う」→ 前回と異なるジャンルで検索
     if (isDifferentRequest) {
-      const prevGenre = extractPreviousGenre(recentMessages);
+      const prevGenres = extractAllPreviousGenres(recentMessages);
+      const prevShopNames = extractPreviousShopNames(recentMessages);
       const searchArea = conditions.area || search.extractArea(recentMessages) || '東京';
       const searchBudget = conditions.budget || extractBudgetFromMessages(recentMessages.slice(-5)) || '2';
-      // 前回と違うジャンルを選ぶ
+      // 前回と違うジャンルを選ぶ（複数の前回ジャンルを全て除外）
       const allGenres = ['1', '2', '3', '4', '5', '6', '7', '8'];
-      const availableGenres = allGenres.filter(g => g !== prevGenre);
+      const availableGenres = allGenres.filter(g => !prevGenres.includes(g));
       const searchGenre = availableGenres[Math.floor(Math.random() * availableGenres.length)] || '1';
 
       try {
-        const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, 3, conditions.options || {});
+        const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, 5, conditions.options || {});
         if (restaurants && restaurants.length > 0) {
+          // 前回提案した店名と重複する店を除外
+          const filtered = restaurants.filter(r => !prevShopNames.some(name => r.name && r.name.includes(name)));
+          const finalResults = filtered.length > 0 ? filtered.slice(0, 3) : restaurants.slice(0, 3);
           const { buildRestaurantCarousel } = require('./flex');
-          const flexMsg = buildRestaurantCarousel(restaurants, searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: conditions.budgetLabel });
+          const flexMsg = buildRestaurantCarousel(finalResults, searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: conditions.budgetLabel });
           if (flexMsg) return flexMsg;
         }
       } catch (e) {
@@ -242,11 +254,22 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
         delete searchOptions.lunch;
       }
 
+      // S21: チェーン店除外リクエスト検出
+      const isAntiChain = /チェーン(店)?じゃない|チェーン以外|個人店|こだわり(の|がある)/.test(userMessage);
+
       try {
-        const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, 3, searchOptions);
+        const count = isAntiChain ? 6 : 3;
+        const restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, count, searchOptions);
         if (restaurants && restaurants.length > 0) {
+          let results = restaurants;
+          // S21: チェーン店っぽい店名をフィルタ
+          if (isAntiChain) {
+            const chainNames = /鳥貴族|磯丸|串カツ田中|ワタミ|白木屋|魚民|笑笑|はなの舞|甘太郎|土間土間|和民|金の蔵|目利きの銀次|山内農場|千年の宴|福福屋|さくら水産|養老乃瀧|日本海庄や|つぼ八|庄や|大庄|モンテローザ|コロワイド/;
+            results = restaurants.filter(r => !chainNames.test(r.name || ''));
+            if (results.length === 0) results = restaurants;
+          }
           const { buildRestaurantCarousel } = require('./flex');
-          const flexMsg = buildRestaurantCarousel(restaurants, searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: conditions.budgetLabel });
+          const flexMsg = buildRestaurantCarousel(results.slice(0, 3), searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: conditions.budgetLabel });
           if (flexMsg) return flexMsg;
         }
       } catch (e) {
@@ -255,11 +278,24 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
     }
 
     // S24: 前回提案を明示的にsystemに伝える（Flex検索で解決済みの場合はここに来ない）
-    const prevGenreForAI = isDifferentRequest ? extractPreviousGenre(recentMessages) : null;
     const genreLabel = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
-    const extraInstruction = isDifferentRequest
-      ? `\n\n【重要】ユーザーが「さっきと違う」と言っています。前回は「${genreLabel[prevGenreForAI] || '不明'}」系を提案しました。必ず異なるジャンル・異なる店を提案してください。`
-      : '';
+    // S21: チェーン店除外指示をAIにも伝える
+    const isAntiChainForAI = /チェーン(店)?じゃない|チェーン以外|個人店|こだわり(の|がある)/.test(userMessage);
+
+    let extraInstruction = '';
+    if (isDifferentRequest) {
+      const prevGenres = extractAllPreviousGenres(recentMessages);
+      const prevShopNames = extractPreviousShopNames(recentMessages);
+      const prevGenreLabels = prevGenres.map(g => genreLabel[g] || '不明').join('・');
+      const prevShopList = prevShopNames.length > 0 ? prevShopNames.join('、') : 'なし';
+      extraInstruction = `\n\n【重要】ユーザーが「さっきと違う」「他にある？」と言っています。
+前回提案したジャンル: ${prevGenreLabels}
+前回提案した店: ${prevShopList}
+→ 上記のジャンル・店は絶対に使わず、まったく異なるジャンル・異なる店を提案してください。`;
+    }
+    if (isAntiChainForAI) {
+      extraInstruction += `\n\n【重要】ユーザーはチェーン店を避けたいと言っています。鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民等の大手チェーンは絶対に提案しないでください。個人経営・こだわりの店のみ提案してください。`;
+    }
 
     const response = await client.chat.completions.create({
       model: MODEL,
@@ -696,6 +732,52 @@ function extractPreviousGenre(messages) {
   return '5'; // デフォルト（居酒屋を除外するため）
 }
 
+/**
+ * 直前のKanpai発言から全てのジャンルコードを抽出（重複なし）
+ */
+function extractAllPreviousGenres(messages) {
+  const botMessages = messages.filter(m => m.display_name === 'Kanpai').slice(-3);
+  const genres = new Set();
+  for (const msg of botMessages) {
+    const text = msg.message || '';
+    const genre = guessGenreFromText(text);
+    if (genre) genres.add(genre);
+    if (/和食|懐石|割烹/.test(text)) genres.add('1');
+    if (/洋食|ステーキ/.test(text)) genres.add('2');
+    if (/中華/.test(text)) genres.add('3');
+    if (/焼肉/.test(text)) genres.add('4');
+    if (/居酒屋/.test(text)) genres.add('5');
+    if (/ラーメン/.test(text)) genres.add('6');
+    if (/イタリアン/.test(text)) genres.add('7');
+    if (/カフェ/.test(text)) genres.add('8');
+  }
+  if (genres.size === 0) genres.add('5');
+  return Array.from(genres);
+}
+
+/**
+ * 直前のKanpai発言から提案した店名を抽出
+ */
+function extractPreviousShopNames(messages) {
+  const botMessages = messages.filter(m => m.display_name === 'Kanpai').slice(-3);
+  const names = [];
+  for (const msg of botMessages) {
+    const text = msg.message || '';
+    // Flex altText format: "店名1、店名2、店名3"
+    // or text format: "ヒロキヤ新宿、Laugh ラフ 目黒、pulse パルス"
+    const shopMatches = text.match(/[\u3000-\u9FFF\w][\u3000-\u9FFFa-zA-Z0-9ー・\s]{1,20}/g);
+    if (shopMatches) {
+      for (const match of shopMatches) {
+        const trimmed = match.trim();
+        if (trimmed.length >= 2 && !/周辺|エリア|予算|円|件見つけ|詳細|カード|チェック|探した/.test(trimmed)) {
+          names.push(trimmed);
+        }
+      }
+    }
+  }
+  return names;
+}
+
 module.exports = {
   extractFoodFromText,
   generateFoodSuggestion,
@@ -710,4 +792,6 @@ module.exports = {
   extractBudgetFromMessages,
   extractRequestConditions,
   extractPreviousGenre,
+  extractAllPreviousGenres,
+  extractPreviousShopNames,
 };
