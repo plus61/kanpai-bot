@@ -140,12 +140,14 @@ async function searchHotpepper(genre, budget, area, limit = 3, options = {}) {
 
     // ジャンルコードで絞り込み（keywordにジャンル名を混ぜると件数0になりやすい）
     // ※ budget は B* コードで指定すること（d* コードは0件になる）
+    const startOffset = options.start || 1;
     let url = `https://webservice.recruit.co.jp/hotpepper/gourmet/v1/` +
       `?key=${HOTPEPPER_KEY}` +
       `&keyword=${fullKeyword}` +
       `&genre=${genreCode}` +
       `&budget=${budgetCode}` +
       `&count=${limit}` +
+      `&start=${startOffset}` +
       `&order=4` +
       `&format=json`;
     // ランチ検索オプション
