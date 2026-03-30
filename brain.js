@@ -47,19 +47,22 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 - 「1時間以内」「時間ない」なら回転が速い店を提案
 - 「深夜」なら深夜営業の店を提案
 
-【コンテキスト保持】
+【コンテキスト保持（最重要）】
 - 直前の会話でユーザーが言ったことを踏まえて応答する
 - 「他にある？」「もっと見たい」と言われたら:
-  1. ユーザーが最初にリクエストしたジャンルを確認する（焼肉→焼肉のまま）
-  2. 同じジャンルで異なる店舗を提案する（ジャンルは変えない）
+  1. ユーザーが最初にリクエストしたジャンルを会話全体から確認する（焼肉→焼肉のまま、絶対変えない）
+  2. 同じジャンルで異なる店舗を提案する（ジャンルは変えない。焼肉と言われたのに和食を出すのは最悪のミス）
   3. 前回提案した店名は絶対に再提示しない
+  4. 必ずHotPepperリンクを付ける
 - 「さっきと違う提案して」「別の」「変えて」と言われたら:
   1. 直前にKanpaiが提案した店舗名・ジャンルを確認する
   2. 必ず異なるジャンルかつ異なる店舗を提案する
   3. 前回が和食なら洋食・中華・焼肉など明確に違うジャンルから選ぶ
-- 「やっぱ〜で」「〜に変更」「〜以内で」→ 条件変更として処理する
+  4. 応答の冒頭で「前回は〇〇だったから、今度は△△で探したよ！」とジャンル変更を明示する
+  5. 必ずHotPepperリンクを付ける
+- 「やっぱ〜で」「〜に変更」「〜円以内で」「〜円で」→ 条件変更として処理する
   1. 変更された条件のみ更新し、他の条件（エリア・ジャンル等）は維持する
-  2. 変更後の条件で具体的な店名とHotPepperリンク付きで再提案する
+  2. 変更後の条件で具体的な店名とHotPepperリンク付きで再提案する（リンクなしは絶対NG）
 - 会話の流れを読んで、既に決まっている情報（エリア・予算・人数）は繰り返し確認しない
 
 【チェーン店・個人店の対応】
@@ -67,7 +70,8 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 - 個人経営・こだわりの店を優先する
 - 店名にチェーン店っぽい特徴（全国展開、フランチャイズ）がある場合は除外する
 - 応答には「個人店だよ！」「チェーンじゃないこだわりの店だよ」等、非チェーンであることを明示する
-- 各店の特徴・おすすめポイントも一言添える（「隠れ家的な雰囲気」「店主こだわりの〜」等）
+- 各店の推薦理由を必ず一言添える（例：「隠れ家的な雰囲気が◎」「店主が毎朝築地で仕入れてる」「口コミ4.2の人気店」「〇〇駅徒歩2分で集合しやすい」等）
+- チェーン店を避ける理由に共感を示す（「こだわりの店がいいよね！」等）
 
 【応答の具体性】
 - 曖昧な質問（「何食べようかな」「安くて美味しいとこ」）には気軽に1〜2ジャンルを提案するか、軽く質問する
@@ -226,8 +230,8 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
     const hasKeywordCondition = conditions.options && conditions.options.keywords && conditions.options.keywords.length > 0;
     const hasExplicitRequest = conditions.genre || conditions.budget || conditions.mealtime || hasKeywordCondition;
 
-    // MT03: 予算・条件変更検出（「やっぱ〜で」「〜に変更」等）
-    const isConditionUpdate = /やっぱ|やっぱり|予算.*変え|に変更|にして[！!]?$|以内で[！!]?$/.test(userMessage) && !isDifferentRequest;
+    // MT03: 予算・条件変更検出（「やっぱ〜で」「〜に変更」「3000円以内で」等）
+    const isConditionUpdate = (/やっぱ|やっぱり|予算.*変え|に変更|にして[！!]?$|以内で[！!]?$|\d+円[以で]/.test(userMessage)) && !isDifferentRequest;
     // 条件変更時はチャット履歴からジャンル・エリアを補完
     if (isConditionUpdate && !conditions.genre) {
       conditions.genre = guessGenreFromMessages(recentMessages.slice(-5).filter(m => m.display_name !== 'Kanpai'));
@@ -254,7 +258,8 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
         const availableGenres = allGenres.filter(g => !prevGenres.includes(g));
         searchGenre = availableGenres[Math.floor(Math.random() * availableGenres.length)] || '1';
         const genreLbl = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
-        flexPrefix = `ジャンル変えて${genreLbl[searchGenre] || 'お店'}で探したよ！`;
+        const prevGenreLbls = prevGenres.map(g => genreLbl[g] || '?').join('・');
+        flexPrefix = `前回は${prevGenreLbls}だったから、${genreLbl[searchGenre] || '別ジャンル'}で探したよ！`;
       }
 
       // S21: チェーン店除外
@@ -290,8 +295,8 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
     } else if (isConditionUpdate || hasExplicitRequest) {
       const searchArea = conditions.area || search.extractArea(recentMessages) || '東京';
       const searchBudget = conditions.budget || extractBudgetFromMessages(recentMessages.slice(-5)) || '2';
-      // MT03: ジャンルが不明な場合、会話履歴全体からユーザーの意図を取得
-      let searchGenre = conditions.genre || guessGenreFromMessages(recentMessages.filter(m => m.display_name !== 'Kanpai')) || '5';
+      // MT03: ジャンルが不明な場合、会話履歴全体からユーザーの意図を取得（Kanpaiの発言からも補完）
+      let searchGenre = conditions.genre || guessGenreFromMessages(recentMessages.filter(m => m.display_name !== 'Kanpai')) || extractPreviousGenre(recentMessages) || '5';
       const searchOptions = conditions.options || {};
 
       // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食に変更
@@ -363,16 +368,21 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
         // MT02: 同ジャンルで別の店（全ユーザーメッセージからジャンルを検索）
         const userGenre = guessGenreFromMessages(recentMessages.filter(m => m.display_name !== 'Kanpai'));
         const genreName = genreLabel[userGenre] || '同じジャンル';
-        extraInstruction = `\n\n【最重要】ユーザーが「他にある？」と言っています。
+        extraInstruction = `\n\n【最重要・厳守】ユーザーが「他にある？」と言っています。
 前回提案した店: ${prevShopList}
 ユーザーが求めているジャンル: ${genreName}
-→ 必ず${genreName}ジャンルで、前回と異なる具体的な実在する店名を提案してください。ジャンルを変えてはいけません。
-→ 各店にHotPepperリンクを必ず付けてください。`;
+→ 必ず${genreName}ジャンルで、前回と異なる具体的な実在する店名を3つ提案してください。
+→ ジャンルを変えてはいけません（${genreName}以外のジャンルを提案したら失格）。
+→ 各店に https://www.hotpepper.jp/ のリンクを必ず付けてください。
+→ 例: 「1️⃣ 〇〇${genreName}（新宿駅3分）https://www.hotpepper.jp/str〇〇〇/」`;
       } else {
-        extraInstruction = `\n\n【重要】ユーザーが「さっきと違う提案して」と言っています。
+        extraInstruction = `\n\n【最重要・厳守】ユーザーが「さっきと違う提案して」と言っています。
 前回提案したジャンル: ${prevGenreLabels}
 前回提案した店: ${prevShopList}
-→ 上記のジャンル・店は絶対に使わず、まったく異なるジャンル・異なる店を提案してください。HotPepperリンクも必ず付けてください。`;
+→ 上記のジャンル・店は絶対に使わず、まったく異なるジャンル・異なる店を提案してください。
+→ 応答の冒頭で「前回は${prevGenreLabels}だったから、今度は〇〇で探したよ！」とジャンル変更を明示してください。
+→ 各店に https://www.hotpepper.jp/ のリンクを必ず付けてください。
+→ 例: 「1️⃣ 〇〇酒場（渋谷駅3分）https://www.hotpepper.jp/str〇〇〇/」`;
       }
     }
     if (isConditionUpdate) {
@@ -387,7 +397,9 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
 → 例: 「1️⃣ 〇〇酒場（池袋駅3分）https://www.hotpepper.jp/str〇〇〇/」`;
     }
     if (isAntiChainForAI) {
-      extraInstruction += `\n\n【重要】ユーザーはチェーン店を避けたいと言っています。鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民等の大手チェーンは絶対に提案しないでください。個人経営・こだわりの店のみ提案し、「個人店だよ！」と明示してください。`;
+      extraInstruction += `\n\n【重要】ユーザーはチェーン店を避けたいと言っています。鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民等の大手チェーンは絶対に提案しないでください。個人経営・こだわりの店のみ提案し、各店ごとに推薦理由を必ず添えてください。
+→ 推薦理由の例: 「口コミ評価が高い」「店主こだわりの食材」「隠れ家的な雰囲気」「駅近でアクセス◎」
+→ 冒頭で「こだわりの個人店で探したよ！」と明示してください。`;
     }
 
     const response = await client.chat.completions.create({
