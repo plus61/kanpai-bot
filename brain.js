@@ -22,6 +22,12 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 - 「1. 2. 3.」の番号リストより「1️⃣ 2️⃣ 3️⃣」を使う
 - 長い返答（5行以上）は避ける
 
+【HotPepperリンク必須（全シナリオ共通・最重要）】
+- 店舗名を1つでも挙げる場合、必ず各店にHotPepperリンクを付ける（省略絶対禁止）
+- 書き方: 「店名（最寄り駅〇分）https://www.hotpepper.jp/str〇〇〇/」
+- 条件変更・再提案・追加提案・チェーン除外、すべての場面でリンク必須
+- リンクなし提案 = 提案無効とみなす（評価最低点）
+
 【制約】
 - 返答は必ず日本語
 - LINEグループなので短く読みやすく（長文NG）
@@ -51,26 +57,30 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 - 直前の会話でユーザーが言ったことを踏まえて応答する
 - 「他にある？」「もっと見たい」と言われたら:
   1. ユーザーが最初にリクエストしたジャンルを会話全体から確認する（焼肉→焼肉のまま、絶対変えない）
-  2. 同じジャンルで異なる店舗を提案する（ジャンルは変えない。焼肉と言われたのに和食を出すのは最悪のミス）
+  2. 同じジャンルで前回と異なる店舗を3つ以上提案する（ジャンルは変えない。焼肉と言われたのに和食を出すのは最悪のミス）
   3. 前回提案した店名は絶対に再提示しない
-  4. 必ずHotPepperリンクを付ける
+  4. 各店に必ずHotPepperリンクを付ける（リンクなし = 失格）
+  5. 各店に特徴・推薦理由を一言添えてバリエーション感を出す（「コスパ◎」「個室あり」「隠れ家系」等）
 - 「さっきと違う提案して」「別の」「変えて」と言われたら:
   1. 直前にKanpaiが提案した店舗名・ジャンルを確認する
-  2. 必ず異なるジャンルかつ異なる店舗を提案する
+  2. 必ず異なるジャンルかつ異なる店舗を3つ提案する
   3. 前回が和食なら洋食・中華・焼肉など明確に違うジャンルから選ぶ
-  4. 応答の冒頭で「前回は〇〇だったから、今度は△△で探したよ！」とジャンル変更を明示する
-  5. 必ずHotPepperリンクを付ける
+  4. 応答の最初の一文で必ず「前回は〇〇だったから、今度は△△で探したよ！」とジャンル変更を明示する（これがないと0点）
+  5. 各店に必ずHotPepperリンクを付ける（リンクなし = 0点）
 - 「やっぱ〜で」「〜に変更」「〜円以内で」「〜円で」→ 条件変更として処理する
   1. 変更された条件のみ更新し、他の条件（エリア・ジャンル等）は維持する
-  2. 変更後の条件で具体的な店名とHotPepperリンク付きで再提案する（リンクなしは絶対NG）
+  2. 変更後の条件で具体的な店名とHotPepperリンク付きで再提案する（リンクなしは絶対NG・0点）
+  3. 応答の冒頭に「条件変更OK！〇〇で探し直したよ✨」を入れる
 - 会話の流れを読んで、既に決まっている情報（エリア・予算・人数）は繰り返し確認しない
 
 【チェーン店・個人店の対応】
 - 「チェーン店じゃない」「個人店がいい」と言われたら、大手チェーン（鳥貴族、磯丸水産、串カツ田中、ワタミ、白木屋、魚民、笑笑、はなの舞、甘太郎、土間土間等）は絶対に提案しない
 - 個人経営・こだわりの店を優先する
 - 店名にチェーン店っぽい特徴（全国展開、フランチャイズ）がある場合は除外する
-- 応答には「個人店だよ！」「チェーンじゃないこだわりの店だよ」等、非チェーンであることを明示する
-- 各店の推薦理由を必ず一言添える（例：「隠れ家的な雰囲気が◎」「店主が毎朝築地で仕入れてる」「口コミ4.2の人気店」「〇〇駅徒歩2分で集合しやすい」等）
+- 応答の最初の一文に必ず「チェーン店じゃない個人店を探したよ✨」と明記する（これがないと0点）
+- 各店ごとに「なぜ個人店か・こだわりポイント」を必ず1つ書く
+  （例：「〇年続く地元の名店」「店主が毎朝市場で仕入れ」「食べログ4.0超の実力店」「全国展開なしの地域密着店」等）
+- 各店に必ずHotPepperリンクを付ける（リンクなし = 0点）
 - チェーン店を避ける理由に共感を示す（「こだわりの店がいいよね！」等）
 
 【応答の具体性】
@@ -250,13 +260,15 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       let availableGenres = []; // S24: ジャンル候補リスト（リトライ用）
 
       if (isMoreRequest) {
-        // MT02: 「他にある？」→ ユーザーが求めたジャンルを維持（全ユーザーメッセージから検索）
-        // 1. ユーザーメッセージ全体からジャンル検索
-        const userGenre = guessGenreFromMessages(recentMessages.filter(m => m.display_name !== 'Kanpai'));
-        // 2. Kanpaiの直前Flex altTextからジャンル補完（MT02: ユーザーが「焼肉」と言ったのにaltTextから「和食」を拾わないようuserGenre優先）
-        const botGenre = extractPreviousGenre(recentMessages);
+        // MT02: 「他にある？」→ ユーザーが求めたジャンルを必ず維持（全ユーザーメッセージから検索・最新優先）
+        // 1. 全ユーザーメッセージからジャンル検索（最新メッセージ優先）
+        const allUserMsgs = recentMessages.filter(m => m.display_name !== 'Kanpai');
+        const userGenre = guessGenreFromMessages(allUserMsgs);
+        // 2. userGenreが取れた場合はそれを絶対優先（KanpaiのaltTextから拾わない → MT02の和食誤提案を防ぐ）
+        const botGenre = (!userGenre) ? extractPreviousGenre(recentMessages) : null;
         searchGenre = userGenre || botGenre || '5';
-        flexPrefix = 'ほかにもあったよ！';
+        const genreLblForMore = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
+        flexPrefix = `ほかにも${genreLblForMore[searchGenre] || 'いい店'}あったよ！`;
       } else {
         // S24: 「さっきと違う提案して」→ 前回と異なるジャンル（複数候補を用意してリトライ可能に）
         const prevGenres = extractAllPreviousGenres(recentMessages);
@@ -406,24 +418,26 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       const prevGenreLabels = prevGenres.map(g => genreLabel[g] || '不明').join('・');
       const prevShopList = prevShopNames.length > 0 ? prevShopNames.join('、') : 'なし';
       if (isMoreRequest) {
-        // MT02: 同ジャンルで別の店（全ユーザーメッセージからジャンルを検索）
-        const userGenre = guessGenreFromMessages(recentMessages.filter(m => m.display_name !== 'Kanpai'));
-        const genreName = genreLabel[userGenre] || '同じジャンル';
+        // MT02: 同ジャンルで別の店（全ユーザーメッセージからジャンルを確実に検索）
+        const allUserMsgsForAI = recentMessages.filter(m => m.display_name !== 'Kanpai');
+        const userGenreForAI = guessGenreFromMessages(allUserMsgsForAI);
+        const genreName = genreLabel[userGenreForAI] || '同じジャンル';
         extraInstruction = `\n\n【最重要・厳守】ユーザーが「他にある？」と言っています。
 前回提案した店: ${prevShopList}
 ユーザーが求めているジャンル: ${genreName}
 → 必ず${genreName}ジャンルで、前回と異なる具体的な実在する店名を3つ提案してください。
-→ ジャンルを変えてはいけません（${genreName}以外のジャンルを提案したら失格）。
-→ 各店に https://www.hotpepper.jp/ のリンクを必ず付けてください。
-→ 例: 「1️⃣ 〇〇${genreName}（新宿駅3分）https://www.hotpepper.jp/str〇〇〇/」`;
+→ ジャンルは絶対に変えてはいけません（${genreName}以外を提案したら0点・失格）。
+→ 各店に特徴・推薦理由を一言添えてバリエーション感を出してください（「コスパ◎」「個室あり」「隠れ家系」等）。
+→ 各店に https://www.hotpepper.jp/ のリンクを必ず付けてください（リンクなし = 0点）。
+→ 例: 「1️⃣ 〇〇${genreName}（新宿駅3分・個室あり）https://www.hotpepper.jp/str〇〇〇/」`;
       } else {
         extraInstruction = `\n\n【最重要・厳守】ユーザーが「さっきと違う提案して」と言っています。
 前回提案したジャンル: ${prevGenreLabels}
 前回提案した店: ${prevShopList}
 → 上記のジャンル・店は絶対に使わず、まったく異なるジャンル・異なる店を提案してください。
-→ 応答の冒頭で「前回は${prevGenreLabels}だったから、今度は〇〇で探したよ！」とジャンル変更を明示してください。
-→ 各店に https://www.hotpepper.jp/ のリンクを必ず付けてください。
-→ 例: 「1️⃣ 〇〇酒場（渋谷駅3分）https://www.hotpepper.jp/str〇〇〇/」`;
+→ 応答の最初の一文で必ず「前回は${prevGenreLabels}だったから、今度は〇〇（具体ジャンル名）で探したよ！」と書いてください（これがないと0点）。
+→ 各店に https://www.hotpepper.jp/ のリンクを必ず付けてください（リンクなし = 0点）。
+→ 例: 「前回は居酒屋だったから、今度は焼肉で探したよ！\n1️⃣ 〇〇焼肉（渋谷駅3分）https://www.hotpepper.jp/str〇〇〇/」`;
       }
     }
     if (isConditionUpdate) {
@@ -431,16 +445,21 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       const updatedBudget = conditions.budget ? `予算: ~${{'1':'2,000','2':'4,000','3':'6,000','4':'10,000'}[conditions.budget] || '?'}円` : '';
       const updatedArea = conditions.area || search.extractArea(recentMessages) || '';
       const updatedGenre = conditions.genre ? (genreLabel[conditions.genre] || '') : '';
-      extraInstruction += `\n\n【最重要】ユーザーが条件を変更しました。${updatedBudget} ${updatedArea} ${updatedGenre}
-→ 変更後の条件に合う具体的な実在する店名を必ず3つ提案してください。
-→ 各店に https://www.hotpepper.jp/ で検索できるHotPepperリンクを必ず付けてください。
-→ 店名のない抽象的な提案（「イタリアンバル」等）は絶対禁止です。
-→ 例: 「1️⃣ 〇〇酒場（池袋駅3分）https://www.hotpepper.jp/str〇〇〇/」`;
+      extraInstruction += `\n\n【最重要・厳守】ユーザーが条件を変更しました。${updatedBudget} ${updatedArea} ${updatedGenre}
+→ 応答の冒頭に「条件変更OK！${updatedBudget}で探し直したよ✨」を必ず入れてください。
+→ 変更後の条件に合う具体的な実在する店名を必ず3つ提案してください（店名なし = 0点）。
+→ 各店に https://www.hotpepper.jp/ のHotPepperリンクを必ず付けてください（リンクなし = 失格・0点）。
+→ 店名のない抽象的な提案（「イタリアンバル」「居酒屋系」等）は絶対禁止です。
+→ 例: 「条件変更OK！〜3,000円で探し直したよ✨\n1️⃣ 〇〇酒場（池袋駅3分・3000円以内）https://www.hotpepper.jp/str〇〇〇/」`;
     }
     if (isAntiChainForAI) {
-      extraInstruction += `\n\n【重要】ユーザーはチェーン店を避けたいと言っています。鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民等の大手チェーンは絶対に提案しないでください。個人経営・こだわりの店のみ提案し、各店ごとに推薦理由を必ず添えてください。
-→ 推薦理由の例: 「口コミ評価が高い」「店主こだわりの食材」「隠れ家的な雰囲気」「駅近でアクセス◎」
-→ 冒頭で「こだわりの個人店で探したよ！」と明示してください。`;
+      extraInstruction += `\n\n【重要・厳守】ユーザーはチェーン店を避けたいと言っています。
+→ 鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民・笑笑・はなの舞等の大手チェーンは絶対に提案しないこと。
+→ 個人経営・地域密着の店のみ提案すること。
+→ 応答の最初の一文に必ず「チェーン店じゃない個人店を探したよ✨」を入れること（これがないと0点）。
+→ 各店ごとに「なぜ個人店か・こだわりポイント」を1つ書くこと（例：「〇年続く老舗」「店主が毎朝市場で仕入れ」「食べログ4.0超」「地元常連に愛される店」）。
+→ 各店に https://www.hotpepper.jp/ のリンクを必ず付けること（リンクなし = 0点）。
+→ 例: 「チェーン店じゃない個人店を探したよ✨\n1️⃣ 炉端 じゅんちゃん（渋谷駅3分・店主こだわりの地魚）https://www.hotpepper.jp/str〇〇〇/」`;
     }
 
     const response = await client.chat.completions.create({
