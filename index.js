@@ -714,6 +714,8 @@ async function handleFoodSuggestion(event, groupId) {
     // 条件が具体的な場合はHotPepper検索リンクも追加
     if (/教えて|ある[？?]|ない[？?]|探して|行きたい|食べたい|奮発|記念日|接待|デート|飲める|個室/.test(currentMessage)) {
       messages.push({ type: 'text', text: `🔗 HotPepperでもっと探す:\n${hotpepperUrl}` });
+      const tabelogUrl = flex.getTabelogAffiliateUrl(area || '東京', area);
+      messages.push({ type: 'text', text: `🍽 食べログで予約:\n${tabelogUrl}` });
     }
 
     await lineClient.replyMessage({

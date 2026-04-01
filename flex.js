@@ -26,6 +26,17 @@ const GENRE_COLOR = {
   '8': '#7D6544', // カフェ → ブラウン
 };
 
+/**
+ * 食べログアフィリエイトURL（ValueCommerce MyLink）を生成
+ * sid=3765360, pid=892584846 は固定（ValueCommerceのアカウント情報）
+ */
+function getTabelogAffiliateUrl(shopName, area) {
+  const keyword = encodeURIComponent(shopName || '');
+  const sa = encodeURIComponent(area || '');
+  const tabelogSearchUrl = `https://tabelog.com/rstLst/?vs=1&sa=${sa}&keyword=${keyword}`;
+  return `https://ck.jp.ap.valuecommerce.com/servlet/referral?sid=3765360&pid=892584846&vc_url=${encodeURIComponent(tabelogSearchUrl)}`;
+}
+
 const BASE_URL = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
   : 'https://kanpai-bot.vercel.app';
@@ -175,6 +186,18 @@ function buildShopBubble(shop, index, genre, groupId, budget, area) {
         style: 'secondary',
         height: 'sm',
       },
+      // 食べログ検索ボタン（ValueCommerceアフィリエイト）
+      {
+        type: 'button',
+        style: 'secondary',
+        height: 'sm',
+        margin: 'xs',
+        action: {
+          type: 'uri',
+          label: '🍽 食べログで予約する',
+          uri: getTabelogAffiliateUrl(shop.name, area),
+        },
+      },
     ],
     paddingAll: '12px',
     backgroundColor: '#F8F8F8',
@@ -270,4 +293,5 @@ module.exports = {
   buildRestaurantCarousel,
   buildShopBubble,
   buildSummaryBubble,
+  getTabelogAffiliateUrl,
 };
