@@ -129,8 +129,8 @@ async function searchHotpepper(genre, budget, area, limit = 3, options = {}) {
   if (!HOTPEPPER_KEY) return null;
 
   try {
-    const genreCode = HOTPEPPER_GENRE[genre] || 'G001';
-    const budgetCode = HOTPEPPER_BUDGET[budget] || 'B006';
+    const genreCode = genre ? (HOTPEPPER_GENRE[genre] || 'G001') : null;
+    const budgetCode = budget ? (HOTPEPPER_BUDGET[budget] || null) : null;
 
     // キーワードに特殊条件を追加
     const extraKeywords = (options.keywords || []).join(' ');
@@ -144,8 +144,8 @@ async function searchHotpepper(genre, budget, area, limit = 3, options = {}) {
     let url = `https://webservice.recruit.co.jp/hotpepper/gourmet/v1/` +
       `?key=${HOTPEPPER_KEY}` +
       `&keyword=${fullKeyword}` +
-      `&genre=${genreCode}` +
-      `&budget=${budgetCode}` +
+      (genreCode ? `&genre=${genreCode}` : '') +
+      (budgetCode ? `&budget=${budgetCode}` : '') +
       `&count=${limit}` +
       `&start=${startOffset}` +
       `&order=4` +
@@ -228,6 +228,18 @@ async function searchRestaurants(genre, budget, area, limit = 3, options = {}) {
   if ((!results || results.length === 0) && options.lunch) {
     console.log('[search] Hotpepper lunch miss, retrying without lunch filter');
     results = await searchHotpepper(genre, budget, area, limit, {});
+  }
+
+  // 3b. 予算フィルタで0件の場合は予算なしで再検索（地方エリアはB*コードがヒットしにくい）
+  if (!results || results.length === 0) {
+    console.log('[search] Hotpepper budget miss, retrying without budget filter');
+    results = await searchHotpepper(genre, null, area, limit, options);
+  }
+
+  // 3c. ジャンル+予算なしでも0件の場合はジャンルも外して再検索
+  if (!results || results.length === 0) {
+    console.log('[search] Hotpepper genre miss, retrying keyword-only');
+    results = await searchHotpepper(null, null, area, limit, {});
   }
 
   // 4. Hotpepper失敗時はPlacesにフォールバック
