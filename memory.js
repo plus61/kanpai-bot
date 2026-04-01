@@ -37,7 +37,22 @@ async function getRecentMessages(groupId, limit = 20) {
       .eq('group_id', groupId)
       .order('created_at', { ascending: false })
       .limit(limit);
-    return (data || []).reverse();
+    const messages = (data || []).reverse();
+
+    // 時間的コンテキストリセット: 直近メッセージから遡って3時間以上のギャップがあれば古い文脈を切り捨てる
+    if (messages.length >= 2) {
+      const latestTime = new Date(messages[messages.length - 1].created_at).getTime();
+      for (let i = messages.length - 2; i >= 0; i--) {
+        const t = new Date(messages[i].created_at).getTime();
+        const gapHours = (latestTime - t) / (1000 * 60 * 60);
+        if (gapHours > 3) {
+          // このインデックス以前は別の会話セッション — 切り捨てる
+          return messages.slice(i + 1);
+        }
+      }
+    }
+
+    return messages;
   } catch (e) {
     console.error('getRecentMessages error:', e.message);
     return [];
