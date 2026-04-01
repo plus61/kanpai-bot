@@ -615,11 +615,29 @@ async function handleFoodSuggestion(event, groupId) {
 
     // S14/S24: 「他にある？」「さっきと違う」→ 前回と異なるジャンルで検索
     const isDifferentRequest = /さっきと違う|別の|他に(ある|ない|は)?|違う(の|店|ところ|提案)|もっと(他|違う)|変えて/.test(currentMessage);
+    const isMoreOnly = /他に(ある|ない|は)?[？?]?$|もっと(見|教|出|ある)|他の(店|候補)/.test(currentMessage);
+    let diffPrefix = '';
     if (isDifferentRequest) {
       const prevGenre = brain.extractPreviousGenre(recentMessages);
-      const allGenres = ['1', '2', '3', '4', '6', '7', '8']; // '5'(居酒屋)も除外候補
-      const availableGenres = allGenres.filter(g => g !== prevGenre);
-      effectiveGenre = availableGenres[Math.floor(Math.random() * availableGenres.length)] || '1';
+      const genreMap2 = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
+      if (isMoreOnly) {
+        // 「他にある？」→ 同じジャンルで別の店
+        // ユーザーメッセージから元ジャンルを取得
+        const allUserMsgsForHandler = recentMessages.filter(m => m.display_name !== 'Kanpai');
+        const userGenreForHandler = brain.guessGenreFromMessages(allUserMsgsForHandler) || prevGenre;
+        effectiveGenre = userGenreForHandler;
+        const genreName = genreMap2[userGenreForHandler] || 'いい店';
+        diffPrefix = `前回と違う${genreName}を探したよ！ほかにもこんな店あったよ🔍`;
+        searchOptions.start = 4; // オフセットで前回と違う店を取得
+      } else {
+        // 「さっきと違う提案して」→ 違うジャンルで
+        const prevGenreLabel = genreMap2[prevGenre] || '前回のジャンル';
+        const allGenres = ['1', '2', '3', '4', '6', '7', '8']; // '5'(居酒屋)も除外候補
+        const availableGenres = allGenres.filter(g => g !== prevGenre);
+        effectiveGenre = availableGenres[Math.floor(Math.random() * availableGenres.length)] || '1';
+        const newGenreLabel = genreMap2[effectiveGenre] || '別ジャンル';
+        diffPrefix = `前回は${prevGenreLabel}だったから、今度は${newGenreLabel}で探したよ！`;
+      }
     }
 
     // エリアがある場合 or 具体的な条件がある場合はHotPepper検索を試みる
@@ -654,7 +672,7 @@ async function handleFoodSuggestion(event, groupId) {
         const userBudgetLabel = manBudgetMatchFC
           ? `${parseFloat(manBudgetMatchFC[1])}万円以内`
           : (currentMessage.match(/([\d,]+)円/) ? `${currentMessage.match(/([\d,]+)円/)[1]}円以内` : null);
-        const flexOptions = { ...searchOptions, ...(userBudgetLabel ? { budgetLabel: userBudgetLabel } : {}) };
+        const flexOptions = { ...searchOptions, ...(userBudgetLabel ? { budgetLabel: userBudgetLabel } : {}), ...(diffPrefix ? { prefix: diffPrefix } : {}) };
         const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, flexOptions);
         if (flexMsg) {
           // ユーザーの条件を反映した導入テキストを生成（currentMessageのみから抽出）
@@ -689,9 +707,21 @@ async function handleFoodSuggestion(event, groupId) {
           if (/接待/.test(currentMessage)) parts.push('接待向き');
           if (/1時間|時間以内|急ぎ/.test(currentMessage)) parts.push('回転早め');
           const conditionText = parts.filter(Boolean).join('・');
-          const preamble = conditionText
-            ? `${conditionText}で探したよ🔍`
-            : 'おすすめ見つけたよ🔍';
+          // S20/S22: 接待・デート系は雰囲気を強調
+          let preamble;
+          if (diffPrefix) {
+            preamble = diffPrefix; // S24: 「前回は〇〇だったから...」
+          } else if (/接待|ちゃんとした|しっかりした/.test(currentMessage)) {
+            preamble = `静かで個室あり・接待向きの店を探したよ🥂`;
+          } else if (/デート|カップル|いい感じの店/.test(currentMessage)) {
+            preamble = `雰囲気が良くてデートにぴったりな店を探したよ💕`;
+          } else if (/チェーン(店)?じゃない|個人店/.test(currentMessage)) {
+            preamble = `チェーン店じゃない個人店を探したよ✨`;
+          } else {
+            preamble = conditionText
+              ? `${conditionText}で探したよ🔍`
+              : 'おすすめ見つけたよ🔍';
+          }
 
           await lineClient.replyMessage({
             replyToken: event.replyToken,
