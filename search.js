@@ -341,7 +341,9 @@ function extractSearchOptions(text) {
 
   // 個室: 直接指定 or デート系
   if (/個室|プライベート/.test(text)) options.privateRoom = true;
-  if (/デート|カップル|2人で|二人で|記念日|誕生日/.test(text)) options.privateRoom = true;
+  if (/デート|カップル|2人で|二人で|記念日|誕生日|いい感じ/.test(text)) options.privateRoom = true;
+  // 接待: 個室+静か系キーワード
+  if (/接待|ビジネス|ちゃんとした|しっかりした/.test(text)) options.privateRoom = true;
 
   // 大人数: N人以上 or N人で（10人以上）
   const partyMatch = text.match(/(\d+)人(以上|で入|で食|くらい)?|(\d+)名(以上)?/);

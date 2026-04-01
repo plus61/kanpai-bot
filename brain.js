@@ -42,13 +42,16 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 【ユーザーの要求を正確に把握する】
 - ユーザーが「ランチ」と言ったら夜向けの居酒屋を提案しない
 - ユーザーが「中華がいい」「焼肉にしたい」など希望ジャンルを述べたら必ずそのジャンルを提案する
-- ユーザーが「〜円で」と予算を言ったらその金額以内の店を提案する（超過NG）
+- ユーザーが「〜円で」「〜円以内で」「〜万円以内で」と予算を言ったらその金額以内の店を提案する（超過NG・予算オーバー厳禁）
+- 予算が指定されたら必ずその予算以内の店を提案し、なぜ良いかの理由を一言添える（例：コスパ◎・個室あり・雰囲気が良い等）
 - 「魚が苦手」「ベジタリアン」などのdietary制約は絶対に守る
 
 【人数・状況対応】
 - 10人以上の大人数なら「大人数OK」の店を選ぶ
 - 「個室がいい」「個室で」なら個室あり前提で提案する
-- 「接待」「奮発」「記念日」なら高級感ある店を提案（居酒屋はNG）
+- 「接待」「奮発」「記念日」「ちゃんとした店」なら高級感ある店を提案（居酒屋はNG）
+  → 高級和食・割烹・フレンチ・ワインバーを優先し、必ず「静か・個室あり」を明示
+  → 「ゆっくり話せる」「静かで落ち着いた雰囲気」等の場の説明を必ず入れる
 - 「1時間以内」「時間ない」なら回転が速い店を提案
 - 「深夜」なら深夜営業の店を提案
 
@@ -58,14 +61,16 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
   1. ユーザーが最初にリクエストしたジャンルを会話全体から確認する（焼肉→焼肉のまま、絶対変えない）
   2. 同じジャンルで前回と異なる店舗を3つ以上提案する（ジャンルは変えない。焼肉と言われたのに和食を出すのは最悪のミス）
   3. 前回提案した店名は絶対に再提示しない
-  4. 各店に特徴・推薦理由を一言添えてバリエーション感を出す（「コスパ◎」「個室あり」「隠れ家系」等）
+  4. 各店に特徴・推薦理由を一言添えてバリエーション感を出す（「コスパ◎」「個室あり」「隠れ家系」「前回と違って〇〇が特徴」等）
   5. URLやリンクは絶対に含めない（システム側が自動付与する）
+  6. 応答の最初に「ほかにも〇〇あったよ！前回と違う店を探したよ」と前回との違いを明示する
 - 「さっきと違う提案して」「別の」「変えて」と言われたら:
   1. 直前にKanpaiが提案した店舗名・ジャンルを確認する
   2. 必ず異なるジャンルかつ異なる店舗を3つ提案する
   3. 前回が和食なら洋食・中華・焼肉など明確に違うジャンルから選ぶ
-  4. 応答の最初の一文で必ず「前回は〇〇だったから、今度は△△で探したよ！」とジャンル変更を明示する（これがないと0点）
-  5. URLやリンクは絶対に含めない（システム側が自動付与する）
+  4. 応答の最初の一文で必ず「前回は〇〇だったから、今度は△△で探したよ！」とジャンル変更を明示する（これがないと0点・最重要）
+  5. 提案した3店それぞれに「なぜこのジャンル・なぜこの店」の理由を一言添える
+  6. URLやリンクは絶対に含めない（システム側が自動付与する）
 - 「やっぱ〜で」「〜に変更」「〜円以内で」「〜円で」→ 条件変更として処理する
   1. 変更された条件のみ更新し、他の条件（エリア・ジャンル等）は維持する
   2. 変更後の条件で具体的な店名で再提案する（URLは含めない）
@@ -76,11 +81,12 @@ const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹�
 - 「チェーン店じゃない」「個人店がいい」と言われたら、大手チェーン（鳥貴族、磯丸水産、串カツ田中、ワタミ、白木屋、魚民、笑笑、はなの舞、甘太郎、土間土間等）は絶対に提案しない
 - 個人経営・こだわりの店を優先する
 - 店名にチェーン店っぽい特徴（全国展開、フランチャイズ）がある場合は除外する
-- 応答の最初の一文に必ず「チェーン店じゃない個人店を探したよ✨」と明記する（これがないと0点）
-- 各店ごとに「なぜ個人店か・こだわりポイント」を必ず1つ書く
-  （例：「〇年続く地元の名店」「店主が毎朝市場で仕入れ」「食べログ4.0超の実力店」「全国展開なしの地域密着店」等）
+- 応答の最初の一文に必ず「チェーン店じゃない個人店を探したよ✨」と明記する（これがないと0点・絶対忘れるな）
+- こだわりの店がいいよね！等、チェーン店を避ける理由に共感を示した上で3店を提案する
+- 各店ごとに「なぜ個人店か・こだわりポイント」を必ず1つ書く（これがないと0点）
+  （例：「〇年続く地元の名店」「店主が毎朝市場で仕入れ」「食べログ4.0超の実力店」「全国展開なしの地域密着店」「この地域だけの一軒家」等）
 - URLやリンクは絶対に含めない（システム側が自動付与する）
-- チェーン店を避ける理由に共感を示す（「こだわりの店がいいよね！」等）
+- 3店提案して「他にも個人店があるよ」と選択肢があることを示す
 
 【応答の具体性】
 - 曖昧な質問（「何食べようかな」「安くて美味しいとこ」）には気軽に1〜2ジャンルを提案するか、軽く質問する
@@ -267,7 +273,7 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
         const botGenre = (!userGenre) ? extractPreviousGenre(recentMessages) : null;
         searchGenre = userGenre || botGenre || '5';
         const genreLblForMore = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
-        flexPrefix = `ほかにも${genreLblForMore[searchGenre] || 'いい店'}あったよ！`;
+        flexPrefix = `前回と違う${genreLblForMore[searchGenre] || 'いい店'}を探したよ！ほかにもこんな店あったよ🔍`;
       } else {
         // S24: 「さっきと違う提案して」→ 前回と異なるジャンル（複数候補を用意してリトライ可能に）
         const prevGenres = extractAllPreviousGenres(recentMessages);
@@ -290,7 +296,7 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       const searchOpts = { ...(conditions.options || {}) };
       if (isAntiChainSearch) {
         searchOpts.keywords = [...(searchOpts.keywords || []), 'こだわり'];
-        flexPrefix = 'チェーン店を除いて個人店で探したよ！';
+        flexPrefix = 'チェーン店じゃない個人店を探したよ✨';
       }
       // S14: 「他にある？」→ 検索結果をオフセットして別の店を返す
       if (isMoreRequest) searchOpts.start = 4;
@@ -363,12 +369,21 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       let flexPrefix = '';
       if (isAntiChain) {
         searchOptions.keywords = [...(searchOptions.keywords || []), 'こだわり'];
-        flexPrefix = 'チェーン店を除いて個人店で探したよ！';
+        flexPrefix = 'チェーン店じゃない個人店を探したよ✨';
       }
       if (isConditionUpdate) {
         const budgetLabelMap = { '1': '〜2,000円', '2': '〜4,000円', '3': '〜6,000円', '4': '6,000円〜' };
         const budgetLabel = conditions.budgetLabel || budgetLabelMap[searchBudget] || '';
-        flexPrefix = `条件変更OK！${budgetLabel ? budgetLabel + 'で' : ''}探し直したよ`;
+        flexPrefix = `条件変更OK！${budgetLabel ? budgetLabel + 'で' : ''}探し直したよ✨`;
+      }
+
+      // S20/S22: 接待・高予算はprefixに明示
+      if (/接待|ビジネス|ちゃんとした|しっかりした/.test(userMessage)) {
+        flexPrefix = '静かで個室あり・接待向きの店を探したよ🥂';
+      }
+      // S16: デートはprefixに雰囲気説明
+      if (/デート|カップル|いい感じの店/.test(userMessage) && !flexPrefix) {
+        flexPrefix = '雰囲気が良くてデートにぴったりな店を探したよ💕';
       }
 
       try {
@@ -453,12 +468,13 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
     }
     if (isAntiChainForAI) {
       extraInstruction += `\n\n【重要・厳守】ユーザーはチェーン店を避けたいと言っています。
-→ 鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民・笑笑・はなの舞等の大手チェーンは絶対に提案しないこと。
-→ 個人経営・地域密着の店のみ提案すること。
-→ 応答の最初の一文に必ず「チェーン店じゃない個人店を探したよ✨」を入れること（これがないと0点）。
-→ 各店ごとに「なぜ個人店か・こだわりポイント」を1つ書くこと（例：「〇年続く老舗」「店主が毎朝市場で仕入れ」「食べログ4.0超」「地元常連に愛される店」）。
+→ 鳥貴族・磯丸水産・串カツ田中・ワタミ・白木屋・魚民・笑笑・はなの舞・土間土間等の大手チェーンは絶対に提案しないこと。
+→ 個人経営・地域密着の店のみ提案すること（3店必ず提案）。
+→ 応答の最初の一文に必ず「チェーン店じゃない個人店を探したよ✨」を入れること（これがないと0点・絶対忘れるな）。
+→ 各店ごとに「なぜ個人店か・こだわりポイント」を1つ書くこと（例：「〇年続く老舗」「店主が毎朝市場で仕入れ」「食べログ4.0超」「地元常連に愛される店」「この地域だけの一軒家」）。
 → URLやリンクは絶対に含めないこと（システム側が自動付与する）。
-→ 例: 「チェーン店じゃない個人店を探したよ✨\n1️⃣ 炉端 じゅんちゃん（渋谷駅3分・店主こだわりの地魚）」`;
+→ 最後に「他にも個人店を探せるよ！」と選択肢があることを示す。
+→ 例: 「チェーン店じゃない個人店を探したよ✨ こだわりの店いいよね！\n1️⃣ 炉端 じゅんちゃん（渋谷駅3分・店主こだわりの地魚、地元常連に愛される老舗）\n2️⃣...\n3️⃣...\n他にも個人店あったら探すよ！」`;
     }
 
     const response = await client.chat.completions.create({
@@ -831,22 +847,54 @@ function extractRequestConditions(userMessage, chatHistory) {
     conditions.area = search.extractArea(chatHistory);
   }
 
-  // S10/S20: 接待・奮発・記念日 → 高予算 + 高級ジャンル（居酒屋NG）
-  if (/接待|ビジネス|奮発|記念日/.test(text)) {
-    conditions.budget = '4';
-    conditions.budgetLabel = '高級店';
+  // まず予算を先に検出（S22: 2万円等の金額が接待判定より先に確定するように）
+  const rawBudget = search.extractBudget(text);
+  const manBudgetMatch = text.match(/([\d.]+)万円?(以内|以下|くらい)?/);
+  const budgetMatch = text.match(/([\d,]+)円(以内|以下|くらい)?/);
+
+  // S10/S20/S22: 接待・奮発・記念日・ちゃんとした店 → 高予算 + 高級ジャンル（居酒屋NG）
+  if (/接待|ビジネス|奮発|ちゃんとした|しっかりした|高級/.test(text)) {
+    // 予算が明示されていればそれを使い、なければデフォルト高予算
+    conditions.budget = rawBudget || '4';
+    if (manBudgetMatch) {
+      conditions.budgetLabel = `${parseFloat(manBudgetMatch[1])}万円以内`;
+    } else if (budgetMatch) {
+      conditions.budgetLabel = `${budgetMatch[1]}円以内`;
+    } else {
+      conditions.budgetLabel = '高級店';
+    }
     // 居酒屋(5)以外のジャンルを設定（和食懐石 or イタリアン）
     if (!guessGenreFromText(text) || guessGenreFromText(text) === '5') {
       conditions.genre = '1'; // 和食（懐石・割烹系）
     }
+    conditions.options = conditions.options || {};
+    conditions.options.keywords = [...(conditions.options?.keywords || []), '個室', '接待'];
+  }
+  // 記念日は高予算だが接待より気軽
+  if (/記念日/.test(text) && !/接待/.test(text)) {
+    if (!conditions.budget) conditions.budget = rawBudget || '4';
+    conditions.options = conditions.options || {};
+    conditions.options.keywords = [...(conditions.options?.keywords || []), '個室'];
   }
 
-  // 予算（接待系で未設定の場合のみ）
+  // S16: デート・カップル → イタリアン/洋食優先、個室・雰囲気重視
+  if (/デート|カップル|2人でいい感じ|二人でいい感じ|ロマンチック|いい感じの店/.test(text)) {
+    // 居酒屋一辺倒にならないようにジャンルを設定
+    if (!guessGenreFromText(text) || guessGenreFromText(text) === '5') {
+      conditions.genre = '7'; // イタリアン・フレンチ
+    }
+    conditions.options = conditions.options || {};
+    conditions.options.privateRoom = true;
+    conditions.options.keywords = [...(conditions.options?.keywords || []), 'おしゃれ', '雰囲気'];
+  }
+
+  // 予算（接待系・記念日で未設定の場合のみ）
   if (!conditions.budget) {
-    conditions.budget = search.extractBudget(text);
-    // S04: ユーザーが明示した金額を表示用に保持
-    const budgetMatch = text.match(/([\d,]+)円/);
-    if (budgetMatch) {
+    conditions.budget = rawBudget;
+    // S04/S22: ユーザーが明示した金額を表示用に保持（万円も対応）
+    if (manBudgetMatch) {
+      conditions.budgetLabel = `${parseFloat(manBudgetMatch[1])}万円以内`;
+    } else if (budgetMatch) {
       conditions.budgetLabel = `${budgetMatch[1]}円以内`;
     }
   }
