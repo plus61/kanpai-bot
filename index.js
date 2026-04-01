@@ -539,10 +539,25 @@ async function handleMention(event, groupId, userId, displayName, text) {
     const recentMessages = await memory.getRecentMessages(groupId, 15);
     const response = await brain.generateFreeResponse(recentMessages, text, displayName);
 
-    await lineClient.replyMessage({
-      replyToken: event.replyToken,
-      messages: [{ type: 'text', text: response }]
-    });
+    // Flex or text response
+    if (response && typeof response === 'object' && response.type === 'flex') {
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: [response]
+      });
+      // altTextをKanpaiのメッセージとして保存（コンテキスト継続のため）
+      if (response.altText) {
+        await memory.logMessage(groupId, 'bot', 'Kanpai', response.altText);
+      }
+    } else {
+      const responseText = typeof response === 'string' ? response : JSON.stringify(response);
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: [{ type: 'text', text: responseText }]
+      });
+      // Kanpaiの応答もgroup_messagesに保存（コンテキスト継続のため）
+      await memory.logMessage(groupId, 'bot', 'Kanpai', responseText);
+    }
 
     await memory.updateLastBotMessage(groupId);
   } catch (e) {
@@ -634,8 +649,11 @@ async function handleFoodSuggestion(event, groupId) {
         }
       }
       if (restaurants && restaurants.length > 0) {
-        // S04: ユーザー明示予算をFlexのaltTextにも反映
-        const userBudgetLabel = currentMessage.match(/([\d,]+)円/) ? `${currentMessage.match(/([\d,]+)円/)[1]}円以内` : null;
+        // S04/S22: ユーザー明示予算をFlexのaltTextにも反映（万円も対応）
+        const manBudgetMatchFC = currentMessage.match(/([\d.]+)万円?(以内|以下|くらい)?/);
+        const userBudgetLabel = manBudgetMatchFC
+          ? `${parseFloat(manBudgetMatchFC[1])}万円以内`
+          : (currentMessage.match(/([\d,]+)円/) ? `${currentMessage.match(/([\d,]+)円/)[1]}円以内` : null);
         const flexOptions = { ...searchOptions, ...(userBudgetLabel ? { budgetLabel: userBudgetLabel } : {}) };
         const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, flexOptions);
         if (flexMsg) {
@@ -647,9 +665,12 @@ async function handleFoodSuggestion(event, groupId) {
           if (area) parts.push(`${area}エリア`);
           if (genreGuess !== '5') parts.push(genreMap[effectiveGenre] || '');
           if (currentOptions.lunch) parts.push('ランチ');
-          // S04: ユーザーが明示した予算があればそのまま表示（「3000円」→「3,000円以内」）
-          const userBudgetMatch = currentMessage.match(/([\d,]+)円/);
-          if (userBudgetMatch) {
+          // S04/S22: ユーザーが明示した予算があればそのまま表示（万円も対応）
+          const userManBudgetMatch = currentMessage.match(/([\d.]+)万円?(以内|以下|くらい)?/);
+          const userBudgetMatch = currentMessage.match(/([\d,]+)円(以内|以下|くらい)?/);
+          if (userManBudgetMatch) {
+            parts.push(`${parseFloat(userManBudgetMatch[1])}万円以内`);
+          } else if (userBudgetMatch) {
             parts.push(`${userBudgetMatch[1]}円以内`);
           } else if (/奮発|高級|記念日|接待/.test(currentMessage)) {
             parts.push(budgetMap[budgetGuess] || '');
@@ -679,6 +700,9 @@ async function handleFoodSuggestion(event, groupId) {
               flexMsg,
             ]
           });
+          // KanpaiのFlex応答をgroup_messagesに保存（コンテキスト継続：MT02等のジャンル追跡のため）
+          const altText = flexMsg.altText || preamble;
+          await memory.logMessage(groupId, 'bot', 'Kanpai', altText);
           await memory.updateLastBotMessage(groupId);
           return;
         }
