@@ -37,9 +37,7 @@ function getTabelogAffiliateUrl(shopName, area) {
   return `https://ck.jp.ap.valuecommerce.com/servlet/referral?sid=3765360&pid=892584846&vc_url=${encodeURIComponent(tabelogSearchUrl)}`;
 }
 
-const BASE_URL = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}`
-  : 'https://kanpai-bot.vercel.app';
+const BASE_URL = process.env.BASE_URL || 'https://kanpai-bot.vercel.app';
 
 /**
  * タップ計測付きリダイレクトURLを生成
