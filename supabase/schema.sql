@@ -117,3 +117,15 @@ CREATE TABLE IF NOT EXISTS tap_events (
 );
 CREATE INDEX IF NOT EXISTS tap_events_type_idx ON tap_events(event_type);
 CREATE INDEX IF NOT EXISTS tap_events_tapped_at_idx ON tap_events(tapped_at);
+
+-- 店舗検索キャッシュ（search.js が使用。24時間で失効）
+CREATE TABLE IF NOT EXISTS restaurant_cache (
+  cache_key TEXT PRIMARY KEY,
+  results JSONB NOT NULL,
+  area TEXT,
+  genre TEXT,
+  budget TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS restaurant_cache_expires_idx ON restaurant_cache(expires_at);

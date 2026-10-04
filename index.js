@@ -18,6 +18,42 @@ const supabase = createClient(
 );
 
 const app = express();
+const { AsyncLocalStorage } = require('async_hooks');
+const crypto = require('crypto');
+
+/**
+ * LINE署名検証。チャネルシークレット未設定時は本番では拒否、開発時のみ通過。
+ */
+function verifyLineSignature(rawBody, signature) {
+  const secret = process.env.LINE_CHANNEL_SECRET;
+  if (!secret) return process.env.NODE_ENV !== 'production';
+  if (!signature) return false;
+  const expected = crypto.createHmac('SHA256', secret).update(rawBody).digest();
+  let given;
+  try { given = Buffer.from(signature, 'base64'); } catch (e) { return false; }
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+
+/**
+ * /track の転送先を許可ドメインに限定する（F0-4: オープンリダイレクト対策）
+ */
+const REDIRECT_ALLOWED_HOSTS = [/^(.+\.)?hotpepper\.jp$/, /^(.+\.)?google\.(com|co\.jp)$/, /^maps\.app\.goo\.gl$/];
+const DEFAULT_REDIRECT = 'https://www.hotpepper.jp/';
+function safeRedirect(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return DEFAULT_REDIRECT;
+    return REDIRECT_ALLOWED_HOSTS.some(re => re.test(u.hostname)) ? u.toString() : DEFAULT_REDIRECT;
+  } catch (e) {
+    return DEFAULT_REDIRECT;
+  }
+}
+
+/**
+ * /test/simulate 用: リクエスト単位で返信を横取りする（F0-5）。
+ * 共有の lineClient を差し替えないので、本番の返信と混ざらない。
+ */
+const simulateStore = new AsyncLocalStorage();
 
 const lineConfig = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -27,6 +63,17 @@ const lineConfig = {
 const lineClient = new line.messagingApi.MessagingApiClient({
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
 });
+
+// /test/simulate 実行中だけ返信を収集する（それ以外は通常どおり送信）
+const _replyMessage = lineClient.replyMessage.bind(lineClient);
+lineClient.replyMessage = async (req) => {
+  const sim = simulateStore.getStore();
+  if (sim) {
+    sim.responses.push(...(req.messages || []));
+    return { sentMessages: (req.messages || []).map((m, i) => ({ id: `mock-${i}` })) };
+  }
+  return _replyMessage(req);
+};
 
 // 幹事エンジンにLINEクライアントを渡す
 kanji.setLineClient(lineClient);
@@ -47,18 +94,10 @@ app.post('/webhook',
     req.on('end', () => {
       try {
         req.body = JSON.parse(rawBody);
-        // 署名検証
-        const sig = req.headers['x-line-signature'];
-        // 署名検証（ログのみ、MVPでは通過させる）
-        if (sig && process.env.LINE_CHANNEL_SECRET) {
-          const crypto = require('crypto');
-          const expected = crypto.createHmac('SHA256', process.env.LINE_CHANNEL_SECRET)
-            .update(rawBody).digest('base64');
-          if (sig !== expected) {
-            console.warn('[webhook] signature mismatch (continuing for MVP)');
-          } else {
-            console.log('[webhook] signature OK');
-          }
+        // 署名検証（F0-3: 不一致・欠落は拒否する）
+        if (!verifyLineSignature(rawBody, req.headers['x-line-signature'])) {
+          console.warn('[webhook] signature invalid - rejected');
+          return res.status(401).send('invalid signature');
         }
         next();
       } catch(e) {
@@ -813,12 +852,6 @@ async function handleVoteResponse(event, groupId, userId, optionIndex) {
 
 
 
-// デバッグ：全リクエストをログ（一時的）
-app.post('/debug', express.json(), (req, res) => {
-  console.log('[debug] body:', JSON.stringify(req.body).substring(0, 200));
-  res.json({ received: true, events: (req.body.events || []).length });
-});
-
 /**
  * GET /track - タップ計測 → Supabase記録 → リダイレクト
  */
@@ -837,8 +870,7 @@ app.get('/track', async (req, res) => {
   } catch (e) {
     console.error('[track] supabase insert error:', e.message);
   }
-  const dest = redirect || 'https://www.hotpepper.jp/';
-  res.redirect(302, dest);
+  res.redirect(302, safeRedirect(redirect || DEFAULT_REDIRECT));
 });
 
 /**
@@ -882,56 +914,31 @@ app.get('/track/stats', async (req, res) => {
  */
 app.post('/test/simulate', express.json(), async (req, res) => {
   try {
-    // シークレット認証
-    const { groupId, userId, message, secret } = req.body;
+    const { groupId, userId, message, secret } = req.body || {};
+    // TEST_SECRET 未設定時は常に拒否（未設定同士の一致で通らないようにする）
     if (!process.env.TEST_SECRET || secret !== process.env.TEST_SECRET) {
       return res.status(401).json({ error: 'unauthorized' });
     }
-    
     if (!groupId || !userId || !message) {
       return res.status(400).json({ error: 'missing required fields: groupId, userId, message' });
     }
-    
+
     console.log('[test/simulate] groupId:', groupId, 'userId:', userId, 'message:', message);
-    
-    // 応答を収集するためのモック
-    const responses = [];
-    const mockReplyToken = `test-${Date.now()}`;
-    
-    // LINEクライアントの replyMessage をモック
-    const originalReply = lineClient.replyMessage.bind(lineClient);
-    lineClient.replyMessage = async ({ replyToken, messages }) => {
-      if (replyToken === mockReplyToken) {
-        responses.push(...messages);
-        return { sentMessages: messages.map((m, i) => ({ id: `mock-${i}` })) };
-      }
-      return originalReply({ replyToken, messages });
-    };
-    
-    // イベントをシミュレート
+
     const mockEvent = {
       type: 'message',
-      replyToken: mockReplyToken,
-      source: {
-        type: 'group',
-        groupId: groupId,
-        userId: userId,
-      },
-      message: {
-        type: 'text',
-        text: message,
-      },
+      replyToken: `test-${Date.now()}`,
+      source: { type: 'group', groupId, userId },
+      message: { type: 'text', text: message },
     };
-    
-    await handleEvent(mockEvent);
-    
-    // モックを元に戻す
-    lineClient.replyMessage = originalReply;
-    
+
+    const store = { responses: [] };
+    await simulateStore.run(store, () => handleEvent(mockEvent));
+
     res.json({
       ok: true,
       input: { groupId, userId, message },
-      responses: responses,
+      responses: store.responses,
       timestamp: new Date().toISOString(),
     });
   } catch (e) {
