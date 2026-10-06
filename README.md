@@ -79,3 +79,4 @@ index.js (イベントルーティング)
 - Claude API (claude-opus-4-5)
 - Supabase (PostgreSQL)
 - Vercel
+<!-- 運用テスト XHU-51 2026-10-07 -->
