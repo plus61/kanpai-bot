@@ -9,6 +9,7 @@
 require('dotenv').config();
 const https = require('https');
 const { createClient } = require('@supabase/supabase-js');
+const { getAdjacentAreas, matchesArea, isLunchCandidate } = require('./search-criteria');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -19,7 +20,7 @@ const HOTPEPPER_KEY = process.env.HOTPEPPER_API_KEY;
 const PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
 // Search results made with older HotPepper genre codes must not be reused.
-const CACHE_KEY_VERSION = 'genre-map-v2';
+const CACHE_KEY_VERSION = 'genre-map-v3';
 
 // ジャンルコード → Hotpepper genre_cd
 const HOTPEPPER_GENRE = {
@@ -173,6 +174,10 @@ async function searchHotpepper(genre, budget, area, limit = 3, options = {}) {
       access: s.mobile_access || s.access,
       budget: s.budget?.average,
       open: s.open,
+      smallAreaName: s.small_area?.name,
+      middleAreaName: s.middle_area?.name,
+      serviceAreaName: s.service_area?.name,
+      address: s.address,
       url: s.urls?.pc,
       hotpepperId: s.id,
     }));
@@ -220,62 +225,107 @@ async function searchPlaces(genre, budget, area, limit = 3) {
  * メイン検索関数（キャッシュ → Hotpepper → Places の優先順）
  */
 async function searchRestaurants(genre, budget, area, limit = 3, options = {}) {
-  // オプション付きの場合はキャッシュキーに含める
-  const optKey = options.lunch ? '_lunch' : options.privateRoom ? '_private' : '';
+  // Search behavior changed: never reuse results from a previous fallback policy.
+  const optKey = [
+    options.lunch && 'lunch',
+    options.privateRoom && 'private',
+    options.partyCapacity && `party-${options.partyCapacity}`,
+    options.start && `start-${options.start}`,
+    options.genreExplicit === false && 'implicit-genre',
+    ...(Array.isArray(options.keywords) ? options.keywords.slice().sort() : []),
+  ].filter(Boolean).join('_');
   const key = cacheKey(genre, budget, area) + optKey;
 
   // 1. キャッシュチェック（空配列[]はキャッシュヒットとみなさない）
   const cached = await getCache(key);
   if (cached && cached.length > 0) return cached;
 
-  const requested = { genre, budget, lunch: Boolean(options.lunch) };
-  const withSearchMeta = (results, applied, provider = 'hotpepper') => {
-    if (!Array.isArray(results)) return results;
-    const relaxed = [];
-    if (requested.genre && applied.genre !== requested.genre) relaxed.push('genre');
-    if (requested.budget && applied.budget !== requested.budget) relaxed.push('budget');
-    if (requested.lunch && !applied.lunch) relaxed.push('lunch');
-    return results.map(result => ({ ...result, searchMeta: { provider, relaxed } }));
-  };
-  const searchHotpepperWithMeta = async (searchGenre, searchBudget, searchOptions) => {
-    const found = await searchHotpepper(searchGenre, searchBudget, area, limit, searchOptions);
-    return found && found.length
-      ? withSearchMeta(found, {
-        genre: searchGenre,
-        budget: searchBudget,
-        lunch: Boolean(searchOptions?.lunch),
-      })
-      : found;
-  };
+  const requestedArea = typeof area === 'string' && area.trim() ? area.trim() : null;
+  const genreExplicit = options.genreExplicit ?? Boolean(genre);
+  const requestedLunch = Boolean(options.lunch);
+  const neighbors = requestedArea ? getAdjacentAreas(requestedArea) : [];
+  const exactScopes = [{ queryArea: requestedArea, matchArea: requestedArea, adjacent: false }];
+  const adjacentScopes = neighbors.map(neighbor => ({ queryArea: neighbor, matchArea: neighbor, adjacent: true }));
+  const genreLastScopes = requestedArea ? [...exactScopes, ...adjacentScopes] : exactScopes;
+  const baseOptions = { ...options };
+  delete baseOptions.genreExplicit;
+  const requestCount = Math.min(100, Math.max(20, limit * 6));
 
-  // 2. Hotpepper（無料・日本特化）
-  let results = await searchHotpepperWithMeta(genre, budget, options);
-
-  // 3. ランチ検索でゼロ件の場合は通常検索にフォールバック
-  if ((!results || results.length === 0) && options.lunch) {
-    console.log('[search] Hotpepper lunch miss, retrying without lunch filter');
-    results = await searchHotpepperWithMeta(genre, budget, {});
+  // Build cumulative fallbacks in the issue's order. Each step changes one
+  // additional condition: budget, lunch, adjacent areas, then genre.
+  const stages = [{ genre, budget, lunch: requestedLunch, scopes: exactScopes, relaxed: [] }];
+  const relaxed = [];
+  if (budget) {
+    relaxed.push('budget');
+    stages.push({ genre, budget: null, lunch: requestedLunch, scopes: exactScopes, relaxed: relaxed.slice() });
+  }
+  if (requestedLunch) {
+    relaxed.push('lunch');
+    stages.push({ genre, budget: null, lunch: false, scopes: exactScopes, relaxed: relaxed.slice() });
+  }
+  if (adjacentScopes.length > 0) {
+    relaxed.push('area');
+    stages.push({ genre, budget: null, lunch: false, scopes: adjacentScopes, relaxed: relaxed.slice() });
+  }
+  if (genre) {
+    const genreRelaxed = genreExplicit ? relaxed.concat('genre') : relaxed.slice();
+    stages.push({ genre: null, budget: null, lunch: false, scopes: genreLastScopes, relaxed: genreRelaxed });
   }
 
-  // 3b. 予算フィルタで0件の場合は予算なしで再検索（地方エリアはB*コードがヒットしにくい）
-  if (!results || results.length === 0) {
-    console.log('[search] Hotpepper budget miss, retrying without budget filter');
-    results = await searchHotpepperWithMeta(genre, null, options);
+  let results = [];
+  for (const stage of stages) {
+    const stageResults = [];
+    for (const scope of stage.scopes) {
+      const stageOptions = { ...baseOptions };
+      if (stage.lunch) stageOptions.lunch = true;
+      else delete stageOptions.lunch;
+      const found = await searchHotpepper(stage.genre, stage.budget, scope.queryArea, requestCount, stageOptions);
+      for (const shop of found || []) {
+        if (scope.matchArea && !matchesArea(shop, scope.matchArea)) continue;
+        if (stage.lunch && !isLunchCandidate(shop.open)) continue;
+        const keyPart = shop.hotpepperId || shop.name;
+        if (stageResults.some(existing => (existing.hotpepperId || existing.name) === keyPart)) continue;
+        const shopRelaxed = scope.adjacent
+          ? [...new Set([...stage.relaxed, 'area'])]
+          : stage.relaxed.filter(condition => condition !== 'area');
+        stageResults.push({
+          ...shop,
+          searchMeta: {
+            provider: 'hotpepper',
+            relaxed: shopRelaxed,
+            requestedArea,
+            matchedArea: scope.matchArea,
+          },
+        });
+        if (stageResults.length >= limit) break;
+      }
+      if (stageResults.length >= limit) break;
+    }
+    if (stageResults.length > 0) {
+      results = stageResults.slice(0, limit);
+      break;
+    }
   }
 
-  // 3c. ジャンル+予算なしでも0件の場合はジャンルも外して再検索
-  if (!results || results.length === 0) {
-    console.log('[search] Hotpepper genre miss, retrying keyword-only');
-    results = await searchHotpepperWithMeta(null, null, {});
-  }
-
-  // 4. Hotpepper失敗時はPlacesにフォールバック
-  if (!results || results.length === 0) {
+  // 4. HotPepper miss: Places uses a free-text query, so keep its weaker
+  // guarantees visible in the response metadata and validate the returned area.
+  if (results.length === 0) {
     console.log('[search] Hotpepper miss, falling back to Places');
-    const places = await searchPlaces(genre, budget, area, limit);
-    results = places && places.length
-      ? withSearchMeta(places, { genre, budget: null, lunch: false }, 'places')
-      : places;
+    const places = await searchPlaces(genre, budget, area, requestCount);
+    const matchingPlaces = (places || []).filter(shop => !requestedArea || matchesArea(shop, requestedArea));
+    const placesRelaxed = [];
+    if (budget) placesRelaxed.push('budget');
+    if (requestedLunch) placesRelaxed.push('lunch');
+    if (genreExplicit) placesRelaxed.push('genre');
+    results = matchingPlaces.slice(0, limit).map(shop => ({
+      ...shop,
+      searchMeta: {
+        provider: 'places',
+        relaxed: placesRelaxed,
+        requestedArea,
+        areaVerification: requestedArea ? 'address-match' : 'unspecified',
+      },
+    }));
   }
 
   // 5. キャッシュ保存（24時間）

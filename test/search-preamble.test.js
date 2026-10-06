@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildRelaxedSearchPreamble } = require('../search-preamble');
+const { buildRelaxedSearchPreamble, buildSearchAdjustmentText } = require('../search-preamble');
 
 test('strict results keep the existing preamble', () => {
   assert.equal(
@@ -28,9 +28,16 @@ test('combined fallback names each removed search condition', () => {
   assert.match(
     buildRelaxedSearchPreamble('新宿エリア・イタリアン・ランチ', {
       provider: 'hotpepper',
-      relaxed: ['lunch', 'genre', 'budget'],
+      relaxed: ['budget', 'lunch', 'area', 'genre'],
     }),
-    /ランチ条件・ジャンル条件・予算条件を外して探したよ/
+    /予算条件を外して、ランチ条件を外して、近隣エリアまで広げて、ジャンル条件を外して探したよ/
+  );
+});
+
+test('carousel adjustment text uses the same ordered fallback explanation', () => {
+  assert.equal(
+    buildSearchAdjustmentText({ provider: 'hotpepper', relaxed: ['budget', 'lunch', 'area'] }),
+    '予算条件を外して、ランチ条件を外して、近隣エリアまで広げて探したよ🔍'
   );
 });
 
@@ -40,6 +47,6 @@ test('Places fallback is identified even when there is no filter to relax', () =
       provider: 'places',
       relaxed: [],
     }),
-    'HotPepperで見つからず、Google Placesでも探したよ🗺️'
+    'HotPepperで見つからず、Google Placesでも探したよ🗺️（予算・ジャンル・ランチの一致は保証されないよ）'
   );
 });

@@ -18,7 +18,12 @@ function loadModule(file, requireMock, env = {}) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', file), 'utf8'), sandbox, { filename: file });
   return sandbox.module.exports;
 }
-const flex = loadModule('flex.js', name => { throw new Error(`Unexpected dependency: ${name}`); });
+const searchPreamble = require('../search-preamble');
+const searchCriteria = require('../search-criteria');
+const flex = loadModule('flex.js', name => {
+  if (name === './search-preamble') return searchPreamble;
+  throw new Error(`Unexpected dependency: ${name}`);
+});
 
 function mockSearch({ shops = [], cached = null, responses } = {}) {
   const calls = [], writes = [];
@@ -46,17 +51,19 @@ function mockSearch({ shops = [], cached = null, responses } = {}) {
   const search = loadModule('search.js', name => {
     if (name === 'dotenv') return { config() {} };
     if (name === 'https') return https;
+    if (name === './search-criteria') return searchCriteria;
     if (name === '@supabase/supabase-js') return { createClient: () => ({ from: () => cacheQuery }) };
     throw new Error(`Unexpected dependency: ${name}`);
   }, { HOTPEPPER_API_KEY: 'fixture-only' });
   return { search, calls, writes };
 }
 
-function shop(id, genreName) {
+function shop(id, genreName, { area = '架空エリア', open = '11:00〜22:00' } = {}) {
   return {
     id, name: `架空店舗${id}`, ...(genreName === undefined ? {} : { genre: { name: genreName } }),
     catch: '架空の説明', budget: { average: '3,000円' }, mobile_access: '架空駅徒歩5分',
-    open: '11:00〜22:00', urls: { pc: `https://www.hotpepper.jp/str${id}/` },
+    open, small_area: { name: area }, address: `東京都${area}一丁目`,
+    urls: { pc: `https://www.hotpepper.jp/str${id}/` },
   };
 }
 function headers(restaurants, options = {}) {
@@ -154,11 +161,12 @@ test('fallback result records the budget constraint that was removed', async () 
 test('lunch fallback result records that the lunch filter was removed', async () => {
   const { search } = mockSearch({ responses: [
     { results: { shop: [] } },
+    { results: { shop: [] } },
     { results: { shop: [shop('fixture-lunch', 'イタリアン・フレンチ')] } },
   ] });
   const results = await search.searchRestaurants('7', '2', '架空エリア', 3, { lunch: true });
   assert.equal(results[0].searchMeta.provider, 'hotpepper');
-  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['lunch']);
+  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['budget', 'lunch']);
 });
 
 test('keyword-only fallback records both genre and budget relaxation', async () => {
@@ -168,7 +176,69 @@ test('keyword-only fallback records both genre and budget relaxation', async () 
   ] });
   const results = await search.searchRestaurants('7', '2', '架空エリア');
   assert.equal(results[0].searchMeta.provider, 'hotpepper');
-  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['genre', 'budget']);
+  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['budget', 'genre']);
+});
+
+test('area match is checked against actual shop data and actual genre stays visible', async () => {
+  const { search } = mockSearch({ shops: [
+    shop('fixture-shibuya', '中華', { area: '渋谷' }),
+    shop('fixture-ebisu', '海鮮・焼肉', { area: '恵比寿' }),
+  ] });
+  const results = await search.searchRestaurants('7', '2', '渋谷');
+  assert.deepEqual(Array.from(results, result => result.hotpepperId), ['fixture-shibuya']);
+  assert.equal(results[0].genreName, '中華');
+  assert.deepEqual(headers(results), ['中華']);
+  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), []);
+});
+
+test('lunch candidates opening at 14:00 or with unknown hours are skipped, and relaxed altText stops claiming lunch', async () => {
+  const late = shop('fixture-late-lunch', 'イタリアン', { open: '14:00〜23:00' });
+  const unknown = shop('fixture-unknown-hours', '中華', { open: '' });
+  const { search } = mockSearch({ responses: [
+    { results: { shop: [late, unknown] } },
+    { results: { shop: [late, unknown] } },
+    { results: { shop: [late, unknown] } },
+  ] });
+  const results = await search.searchRestaurants('7', '2', '架空エリア', 3, { lunch: true });
+  assert.equal(results[0].hotpepperId, 'fixture-late-lunch');
+  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['budget', 'lunch']);
+  const card = flex.buildRestaurantCarousel(results, '7', '2', '架空エリア', '', { lunch: true });
+  assert.match(card.altText, /ランチ条件を外して探したよ/);
+  assert.doesNotMatch(card.altText, /のランチ（/);
+});
+
+test('fallback order keeps genre until budget, lunch, and adjacent-area stages are exhausted', async () => {
+  const { search, calls } = mockSearch({ responses: [
+    { results: { shop: [] } }, // original constraints
+    { results: { shop: [] } }, // budget relaxed
+    { results: { shop: [] } }, // lunch relaxed
+    { results: { shop: [shop('fixture-neighbor', '中華', { area: '恵比寿' })] } },
+    { results: { shop: [] } }, // continue gathering up to the requested count
+    { results: { shop: [] } },
+  ] });
+  const results = await search.searchRestaurants('7', '2', '渋谷', 3, { lunch: true });
+  assert.equal(calls.length, 6);
+  const params = calls.map(url => new URL(url).searchParams);
+  assert.deepEqual(params.map(p => p.get('genre')), Array(6).fill('G006'));
+  assert.deepEqual(params.map(p => p.get('budget')), ['B006', null, null, null, null, null]);
+  assert.deepEqual(params.map(p => p.get('lunch')), ['1', '1', null, null, null, null]);
+  assert.deepEqual(params.map(p => p.get('keyword')), ['渋谷', '渋谷', '渋谷', '恵比寿', '表参道', '代官山']);
+  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['budget', 'lunch', 'area']);
+});
+
+test('genre is removed only after all neighboring-area searches miss', async () => {
+  const { search, calls } = mockSearch({ responses: [
+    { results: { shop: [] } }, { results: { shop: [] } }, { results: { shop: [] } },
+    { results: { shop: [] } }, { results: { shop: [] } }, { results: { shop: [] } },
+    { results: { shop: [shop('fixture-genre-last', '中華', { area: '渋谷' })] } },
+    { results: { shop: [] } }, { results: { shop: [] } }, { results: { shop: [] } },
+  ] });
+  const results = await search.searchRestaurants('7', '2', '渋谷', 3, { lunch: true });
+  assert.equal(calls.length, 10);
+  const params = calls.map(url => new URL(url).searchParams);
+  assert.deepEqual(params.slice(0, 6).map(p => p.get('genre')), Array(6).fill('G006'));
+  assert.deepEqual(params.slice(6).map(p => p.has('genre')), Array(4).fill(false));
+  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['budget', 'lunch', 'genre']);
 });
 
 test('budget, area, lunch filter and card details remain intact', async () => {

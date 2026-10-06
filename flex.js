@@ -2,6 +2,7 @@
  * flex.js - LINE Flex Message ビルダー
  * お店情報をカルーセル形式で表示する
  */
+const { buildSearchAdjustmentText } = require('./search-preamble');
 
 /**
  * 予算コード → 表示文字列
@@ -231,7 +232,9 @@ function buildShopBubble(shop, index, genre, groupId, budget, area) {
 function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '', options = {}) {
   if (!restaurants || restaurants.length === 0) return null;
 
-  const areaText = area ? `${area}周辺` : '周辺';
+  const searchMeta = restaurants[0]?.searchMeta;
+  const relaxed = new Set(Array.isArray(searchMeta?.relaxed) ? searchMeta.relaxed : []);
+  const areaText = area ? (relaxed.has('area') ? `${area}近隣` : `${area}周辺`) : '周辺';
   // 要約も表示対象の店舗データから作る。混在・欠損は中立表示にする。
   const genreNames = restaurants.slice(0, 3).map(shop =>
     typeof shop.genreName === 'string' ? shop.genreName.trim() : ''
@@ -239,8 +242,8 @@ function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '',
   const genreText = genreNames[0] && genreNames.every(name => name === genreNames[0])
     ? genreNames[0] : 'お店';
   // S04: ユーザーが明示した予算があればそれを表示（例: "3,000円以内"）
-  const budgetText = options.budgetLabel || BUDGET_LABEL[budget] || '';
-  const mealTypeText = options.lunch ? 'ランチ' : genreText;
+  const budgetText = relaxed.has('budget') ? '予算条件を緩和' : (options.budgetLabel || BUDGET_LABEL[budget] || '');
+  const mealTypeText = options.lunch && !relaxed.has('lunch') ? 'ランチ' : genreText;
 
   const bubbles = restaurants.slice(0, 3).map((shop, i) =>
     buildShopBubble(shop, i, genre, groupId, budget, area)
@@ -248,7 +251,8 @@ function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '',
 
   // altTextに店名を含めて応答の具体性を高める
   const shopNames = restaurants.slice(0, 3).map(s => s.name).join('、');
-  const prefix = options.prefix ? `${options.prefix}\n` : '';
+  const prefixes = [options.prefix, buildSearchAdjustmentText(searchMeta)].filter(Boolean);
+  const prefix = prefixes.length > 0 ? `${prefixes.join('\n')}\n` : '';
   return {
     type: 'flex',
     altText: `${prefix}${areaText}の${mealTypeText}（${budgetText}）を${restaurants.length}件見つけたよ🍻\n${shopNames}\n詳細はカードをチェック！`,

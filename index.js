@@ -316,7 +316,7 @@ async function handleEvent(event) {
         } else {
           await lineClient.replyMessage({
             replyToken: event.replyToken,
-            messages: [response]
+            messages: Array.isArray(response) ? response : [response]
           });
         }
         await memory.updateLastBotMessage(groupId);
@@ -379,13 +379,12 @@ async function handleEvent(event) {
       if (planCtx.shouldApproach) {
         const approachMsg = await brain.generateProactiveApproach(planCtx, recentMsgs, groupId);
         if (approachMsg) {
-          // Flex or テキストを自動判別
-          const lineMsg = typeof approachMsg === 'string'
-            ? { type: 'text', text: approachMsg }
-            : approachMsg; // Flexオブジェクトそのまま
+          const messages = typeof approachMsg === 'string'
+            ? [{ type: 'text', text: approachMsg }]
+            : Array.isArray(approachMsg) ? approachMsg : [approachMsg];
           await lineClient.replyMessage({
             replyToken: event.replyToken,
-            messages: [lineMsg]
+            messages
           });
           await memory.updateLastBotMessage(groupId);
         }
@@ -527,7 +526,7 @@ async function handleDMResponse(event, userId, text) {
           if (typeof suggestion === 'string') {
             await kanji.sendToGroupForce(session.group_id, suggestion);
           } else {
-            await lineClient.pushMessage({ to: session.group_id, messages: [suggestion] });
+            await lineClient.pushMessage({ to: session.group_id, messages: Array.isArray(suggestion) ? suggestion : [suggestion] });
           }
         }
       } else {
@@ -580,7 +579,17 @@ async function handleMention(event, groupId, userId, displayName, text) {
     const response = await brain.generateFreeResponse(recentMessages, text, displayName);
 
     // Flex or text response
-    if (response && typeof response === 'object' && response.type === 'flex') {
+    if (Array.isArray(response)) {
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: response
+      });
+      const savedText = response
+        .map(message => message.type === 'text' ? message.text : message.type === 'flex' ? message.altText : '')
+        .filter(Boolean)
+        .join('\n');
+      if (savedText) await memory.logMessage(groupId, 'bot', 'Kanpai', savedText);
+    } else if (response && typeof response === 'object' && response.type === 'flex') {
       await lineClient.replyMessage({
         replyToken: event.replyToken,
         messages: [response]
@@ -627,6 +636,7 @@ async function handleFoodSuggestion(event, groupId) {
 
     // ジャンル推定: 直近メッセージを優先
     const genreGuess = brain.guessGenreFromMessages(recentMessages.slice(-5)) || '5';
+    searchOptions.genreExplicit = genreGuess !== '5' || /居酒屋/.test(currentMessage + ' ' + recentText);
     // 予算: 現在のメッセージを優先、なければ直近2件のみ参照（古い予算が混入しないように）
     // キーワードベースの予算推定（金額明示なしの場合）
     const inferBudgetFromKeywords = (text) => {
@@ -699,7 +709,7 @@ async function handleFoodSuggestion(event, groupId) {
         for (const sg of supplementGenres) {
           if (restaurants.length >= 3) break;
           try {
-            const extraResults = await search.searchRestaurants(sg, budgetGuess, searchArea, 3 - restaurants.length, {});
+            const extraResults = await search.searchRestaurants(sg, budgetGuess, searchArea, 3 - restaurants.length, { genreExplicit: true });
             if (extraResults && extraResults.length > 0) {
               restaurants = restaurants.concat(extraResults).slice(0, 3);
             }
@@ -798,7 +808,7 @@ async function handleFoodSuggestion(event, groupId) {
     if (typeof suggestion !== 'string') {
       await lineClient.replyMessage({
         replyToken: event.replyToken,
-        messages: [suggestion]
+        messages: Array.isArray(suggestion) ? suggestion : [suggestion]
       });
       await memory.updateLastBotMessage(groupId);
       return;
