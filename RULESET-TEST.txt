@@ -1,0 +1,2 @@
+XHU-51 ruleset test fixture.
+This file documents the test and contains no executable content.
