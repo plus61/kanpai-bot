@@ -137,3 +137,43 @@ test('budget, area, lunch filter and card details remain intact', async () => {
   for (const text of ['架空店舗fixture8', '3,000円', '架空駅徒歩5分', '11:00〜22:00']) assert.ok(content.includes(text));
   assert.equal(card.contents.contents[0].header.contents[0].wrap, true);
 });
+
+
+test('summary describes Chinese results instead of the Italian request', () => {
+  const card = flex.buildRestaurantCarousel([{ name: '架空中華店', genreName: '中華' }], '7', '2', '架空エリア');
+  assert.match(card.altText, /架空エリア周辺の中華（〜4,000円）を1件見つけた/);
+  assert.ok(!card.altText.includes('イタリアン'));
+});
+
+test('summary keeps a uniform actual Italian genre', () => {
+  const card = flex.buildRestaurantCarousel([
+    { name: '架空店舗A', genreName: ' イタリアン・フレンチ ' },
+    { name: '架空店舗B', genreName: 'イタリアン・フレンチ' },
+  ], '7', '2', '架空エリア');
+  assert.match(card.altText, /のイタリアン・フレンチ（/);
+});
+
+test('summary stays neutral for mixed, missing and malformed actual genres', () => {
+  for (const restaurants of [
+    [{ name: '架空中華店', genreName: '中華' }, { name: '架空伊料理店', genreName: 'イタリアン' }],
+    [{ name: '架空旧cache店' }],
+    [{ name: '架空中華店', genreName: '中華' }, { name: '架空欠損店' }],
+    [{ name: '架空不正店', genreName: {} }],
+    [{ name: '架空空白店', genreName: '  ' }],
+    [{ name: '架空Places店', source: 'places' }],
+  ]) {
+    const card = flex.buildRestaurantCarousel(restaurants, '7', '2', '架空エリア');
+    assert.match(card.altText, /のお店（/);
+    assert.ok(!card.altText.includes('のイタリアン（'));
+  }
+});
+
+test('summary genre only reflects the three displayed shops and keeps prefix/budget', () => {
+  const card = flex.buildRestaurantCarousel([
+    { name: '架空A', genreName: '中華' }, { name: '架空B', genreName: '中華' },
+    { name: '架空C', genreName: '中華' }, { name: '架空D', genreName: 'イタリアン' },
+  ], '7', '2', '架空エリア', '', { budgetLabel: '3,000円以内', prefix: '架空の導入' });
+  assert.match(card.altText, /^架空の導入\n架空エリア周辺の中華（3,000円以内）/);
+  assert.ok(!card.altText.includes('架空D'));
+  assert.equal(card.contents.contents.length, 3);
+});
