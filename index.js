@@ -11,6 +11,7 @@ const brain = require('./brain');
 const kanji = require('./kanji');
 const collector = require('./collector');
 const flex = require('./flex');
+const { buildRelaxedSearchPreamble } = require('./search-preamble');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -761,6 +762,9 @@ async function handleFoodSuggestion(event, groupId) {
               ? `${conditionText}で探したよ🔍`
               : 'おすすめ見つけたよ🔍';
           }
+
+          const honestPreamble = buildRelaxedSearchPreamble(conditionText, restaurants[0]?.searchMeta);
+          if (honestPreamble) preamble = honestPreamble;
 
           await lineClient.replyMessage({
             replyToken: event.replyToken,

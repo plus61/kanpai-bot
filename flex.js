@@ -9,10 +9,6 @@
 const BUDGET_LABEL = {
   '1': '〜2,000円', '2': '〜4,000円', '3': '〜6,000円', '4': '6,000円〜'
 };
-const GENRE_LABEL = {
-  '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋',
-  '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ',
-};
 
 // ジャンル別アクセントカラー
 const GENRE_COLOR = {
@@ -210,7 +206,9 @@ function buildShopBubble(shop, index, genre, groupId, budget, area) {
       contents: [
         {
           type: 'text',
-          text: GENRE_LABEL[genre] || 'お店',
+          text: typeof shop.genreName === 'string' && shop.genreName.trim()
+            ? shop.genreName.trim() : 'お店',
+          wrap: true,
           size: 'xxs',
           color: '#FFFFFF',
           align: 'center',
@@ -234,7 +232,12 @@ function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '',
   if (!restaurants || restaurants.length === 0) return null;
 
   const areaText = area ? `${area}周辺` : '周辺';
-  const genreText = GENRE_LABEL[genre] || 'お店';
+  // 要約も表示対象の店舗データから作る。混在・欠損は中立表示にする。
+  const genreNames = restaurants.slice(0, 3).map(shop =>
+    typeof shop.genreName === 'string' ? shop.genreName.trim() : ''
+  );
+  const genreText = genreNames[0] && genreNames.every(name => name === genreNames[0])
+    ? genreNames[0] : 'お店';
   // S04: ユーザーが明示した予算があればそれを表示（例: "3,000円以内"）
   const budgetText = options.budgetLabel || BUDGET_LABEL[budget] || '';
   const mealTypeText = options.lunch ? 'ランチ' : genreText;

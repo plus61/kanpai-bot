@@ -18,15 +18,18 @@ const supabase = createClient(
 const HOTPEPPER_KEY = process.env.HOTPEPPER_API_KEY;
 const PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
+// Search results made with older HotPepper genre codes must not be reused.
+const CACHE_KEY_VERSION = 'genre-map-v2';
+
 // ジャンルコード → Hotpepper genre_cd
 const HOTPEPPER_GENRE = {
-  '1': 'G001',  // 和食（居酒屋含む和食系）
-  '2': 'G002',  // 洋食
-  '3': 'G004',  // 中華
+  '1': 'G004',  // 和食
+  '2': 'G005',  // 洋食
+  '3': 'G007',  // 中華
   '4': 'G008',  // 焼肉・ホルモン
   '5': 'G001',  // 居酒屋（なんでも）
   '6': 'G013',  // ラーメン
-  '7': 'G003',  // イタリアン・フレンチ
+  '7': 'G006',  // イタリアン・フレンチ
   '8': 'G014',  // カフェ・スイーツ
 };
 
@@ -81,7 +84,7 @@ function httpsGet(url) {
  * キャッシュキー生成
  */
 function cacheKey(genre, budget, area) {
-  return `${genre || '5'}_${budget || '2'}_${area || 'tokyo'}`.toLowerCase();
+  return `${CACHE_KEY_VERSION}_${genre || '5'}_${budget || '2'}_${area || 'tokyo'}`.toLowerCase();
 }
 
 /**
@@ -164,6 +167,7 @@ async function searchHotpepper(genre, budget, area, limit = 3, options = {}) {
 
     return shops.map(s => ({
       name: s.name,
+      genreName: s.genre?.name,
       rating: null,  // Hotpepperは評価なし
       catchCopy: s.catch,
       access: s.mobile_access || s.access,
@@ -185,7 +189,10 @@ async function searchPlaces(genre, budget, area, limit = 3) {
   if (!PLACES_KEY) return null;
 
   try {
-    const genreWords = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋' };
+    const genreWords = {
+      '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉',
+      '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ',
+    };
     const keyword = encodeURIComponent(`${area || '東京'} ${genreWords[genre] || '居酒屋'}`);
     const url = `https://maps.googleapis.com/maps/api/place/textsearch/json` +
       `?query=${keyword}&type=restaurant&language=ja&key=${PLACES_KEY}`;
@@ -221,31 +228,54 @@ async function searchRestaurants(genre, budget, area, limit = 3, options = {}) {
   const cached = await getCache(key);
   if (cached && cached.length > 0) return cached;
 
+  const requested = { genre, budget, lunch: Boolean(options.lunch) };
+  const withSearchMeta = (results, applied, provider = 'hotpepper') => {
+    if (!Array.isArray(results)) return results;
+    const relaxed = [];
+    if (requested.genre && applied.genre !== requested.genre) relaxed.push('genre');
+    if (requested.budget && applied.budget !== requested.budget) relaxed.push('budget');
+    if (requested.lunch && !applied.lunch) relaxed.push('lunch');
+    return results.map(result => ({ ...result, searchMeta: { provider, relaxed } }));
+  };
+  const searchHotpepperWithMeta = async (searchGenre, searchBudget, searchOptions) => {
+    const found = await searchHotpepper(searchGenre, searchBudget, area, limit, searchOptions);
+    return found && found.length
+      ? withSearchMeta(found, {
+        genre: searchGenre,
+        budget: searchBudget,
+        lunch: Boolean(searchOptions?.lunch),
+      })
+      : found;
+  };
+
   // 2. Hotpepper（無料・日本特化）
-  let results = await searchHotpepper(genre, budget, area, limit, options);
+  let results = await searchHotpepperWithMeta(genre, budget, options);
 
   // 3. ランチ検索でゼロ件の場合は通常検索にフォールバック
   if ((!results || results.length === 0) && options.lunch) {
     console.log('[search] Hotpepper lunch miss, retrying without lunch filter');
-    results = await searchHotpepper(genre, budget, area, limit, {});
+    results = await searchHotpepperWithMeta(genre, budget, {});
   }
 
   // 3b. 予算フィルタで0件の場合は予算なしで再検索（地方エリアはB*コードがヒットしにくい）
   if (!results || results.length === 0) {
     console.log('[search] Hotpepper budget miss, retrying without budget filter');
-    results = await searchHotpepper(genre, null, area, limit, options);
+    results = await searchHotpepperWithMeta(genre, null, options);
   }
 
   // 3c. ジャンル+予算なしでも0件の場合はジャンルも外して再検索
   if (!results || results.length === 0) {
     console.log('[search] Hotpepper genre miss, retrying keyword-only');
-    results = await searchHotpepper(null, null, area, limit, {});
+    results = await searchHotpepperWithMeta(null, null, {});
   }
 
   // 4. Hotpepper失敗時はPlacesにフォールバック
   if (!results || results.length === 0) {
     console.log('[search] Hotpepper miss, falling back to Places');
-    results = await searchPlaces(genre, budget, area, limit);
+    const places = await searchPlaces(genre, budget, area, limit);
+    results = places && places.length
+      ? withSearchMeta(places, { genre, budget: null, lunch: false }, 'places')
+      : places;
   }
 
   // 5. キャッシュ保存（24時間）
