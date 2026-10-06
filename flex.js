@@ -210,7 +210,9 @@ function buildShopBubble(shop, index, genre, groupId, budget, area) {
       contents: [
         {
           type: 'text',
-          text: GENRE_LABEL[genre] || 'お店',
+          text: typeof shop.genreName === 'string' && shop.genreName.trim()
+            ? shop.genreName.trim() : 'お店',
+          wrap: true,
           size: 'xxs',
           color: '#FFFFFF',
           align: 'center',

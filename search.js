@@ -164,6 +164,7 @@ async function searchHotpepper(genre, budget, area, limit = 3, options = {}) {
 
     return shops.map(s => ({
       name: s.name,
+      genreName: s.genre?.name,
       rating: null,  // Hotpepperは評価なし
       catchCopy: s.catch,
       access: s.mobile_access || s.access,
