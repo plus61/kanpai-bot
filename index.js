@@ -615,6 +615,23 @@ async function handleMention(event, groupId, userId, displayName, text) {
 }
 
 /**
+ * 表示する店舗全体の検索緩和条件を、返信とFlex要約で使う順に集約する。
+ */
+function mergeDisplayedSearchMeta(restaurants) {
+  const displayed = restaurants.slice(0, 3);
+  const baseSearchMeta = displayed.find(restaurant => restaurant?.searchMeta)?.searchMeta;
+  if (!baseSearchMeta) return null;
+
+  const relaxed = new Set(displayed.flatMap(restaurant =>
+    Array.isArray(restaurant?.searchMeta?.relaxed) ? restaurant.searchMeta.relaxed : []
+  ));
+  return {
+    ...baseSearchMeta,
+    relaxed: ['budget', 'lunch', 'area', 'genre'].filter(condition => relaxed.has(condition)),
+  };
+}
+
+/**
  * 食事提案処理
  */
 async function handleFoodSuggestion(event, groupId) {
@@ -723,7 +740,11 @@ async function handleFoodSuggestion(event, groupId) {
           ? `${parseFloat(manBudgetMatchFC[1])}万円以内`
           : (currentMessage.match(/([\d,]+)円/) ? `${currentMessage.match(/([\d,]+)円/)[1]}円以内` : null);
         const flexOptions = { ...searchOptions, ...(userBudgetLabel ? { budgetLabel: userBudgetLabel } : {}), ...(diffPrefix ? { prefix: diffPrefix } : {}) };
-        const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, flexOptions);
+        const displaySearchMeta = mergeDisplayedSearchMeta(restaurants);
+        const displayRestaurants = displaySearchMeta
+          ? [{ ...restaurants[0], searchMeta: displaySearchMeta }, ...restaurants.slice(1)]
+          : restaurants;
+        const flexMsg = flex.buildRestaurantCarousel(displayRestaurants, effectiveGenre, budgetGuess, area || null, groupId, flexOptions);
         if (flexMsg) {
           // ユーザーの条件を反映した導入テキストを生成（currentMessageのみから抽出）
           const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
@@ -773,7 +794,7 @@ async function handleFoodSuggestion(event, groupId) {
               : 'おすすめ見つけたよ🔍';
           }
 
-          const honestPreamble = buildRelaxedSearchPreamble(conditionText, restaurants[0]?.searchMeta);
+          const honestPreamble = buildRelaxedSearchPreamble(conditionText, displaySearchMeta);
           if (honestPreamble) preamble = honestPreamble;
 
           await lineClient.replyMessage({
