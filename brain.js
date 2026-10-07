@@ -5,9 +5,15 @@
 require('dotenv').config();
 const OpenAI = require('openai');
 const search = require('./search');
+const { annotateBudgetAlternative, annotateDroppedKeywords, buildRelaxedSearchPreamble, buildSearchConditionText } = require('./search-preamble');
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = 'gpt-4o-mini';
+
+function withSearchPreamble(flexMessage, restaurants, conditionText) {
+  const preamble = buildRelaxedSearchPreamble(conditionText, restaurants?.[0]?.searchMeta);
+  return preamble ? [{ type: 'text', text: preamble }, flexMessage] : flexMessage;
+}
 
 const KANPAI_SYSTEM = `あなたは「Kanpai」というLINEグループの幹事AIです。
 
@@ -315,6 +321,9 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       const isAntiChainSearch = /チェーン(店)?じゃない|チェーン以外|個人店|こだわり(の|がある)/.test(userMessage) ||
         recentMessages.filter(m => m.display_name !== 'Kanpai').some(m => /チェーン(店)?じゃない|チェーン以外|個人店/.test(m.message));
       const searchOpts = { ...(conditions.options || {}) };
+      const requestedByUser = recentMessages.filter(m => m.display_name !== 'Kanpai');
+      const previouslyRequestedGenre = guessGenreFromMessages(requestedByUser);
+      searchOpts.genreExplicit = isDifferentGenreRequest || Boolean(previouslyRequestedGenre);
       if (isAntiChainSearch) {
         searchOpts.keywords = [...(searchOpts.keywords || []), 'こだわり'];
         flexPrefix = 'チェーン店じゃない個人店を探したよ✨';
@@ -345,23 +354,39 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
           }
         }
         // S14: オフセット検索で0件なら予算を緩和してリトライ
+        let actualBudget = searchBudget;
         if ((!restaurants || restaurants.length === 0) && isMoreRequest && parseInt(searchBudget) < 4) {
-          restaurants = await search.searchRestaurants(usedGenre, String(parseInt(searchBudget) + 1), searchArea, 8, searchOpts);
+          actualBudget = String(parseInt(searchBudget) + 1);
+          restaurants = await search.searchRestaurants(usedGenre, actualBudget, searchArea, 8, searchOpts);
         }
 
         if (restaurants && restaurants.length > 0) {
+          const originalBudgetLabel = conditions.budgetLabel || extractBudgetLabelFromMessages(requestedByUser);
+          const resultsWithBudgetDisclosure = annotateBudgetAlternative(
+            restaurants,
+            searchBudget,
+            actualBudget,
+            originalBudgetLabel,
+          );
           // 前回提案した店名と重複する店を除外
-          let filtered = restaurants.filter(r => !prevShopNames.some(name => r.name && r.name.includes(name)));
+          let filtered = resultsWithBudgetDisclosure.filter(r => !prevShopNames.some(name => r.name && r.name.includes(name)));
           // チェーン店フィルタ
           if (isAntiChainSearch) {
             const chainNames = /鳥貴族|磯丸|串カツ田中|ワタミ|白木屋|魚民|笑笑|はなの舞|甘太郎|土間土間|和民|金の蔵|目利きの銀次|山内農場|千年の宴|福福屋|さくら水産|養老乃瀧|日本海庄や|つぼ八|庄や|大庄|モンテローザ|コロワイド/;
             filtered = filtered.filter(r => !chainNames.test(r.name || ''));
           }
-          const finalResults = filtered.length > 0 ? filtered.slice(0, 3) : restaurants.slice(0, 3);
+          const finalResults = filtered.length > 0 ? filtered.slice(0, 3) : resultsWithBudgetDisclosure.slice(0, 3);
           const { buildRestaurantCarousel } = require('./flex');
-          const label = isAntiChainSearch ? '個人店' : conditions.budgetLabel;
-          const flexMsg = buildRestaurantCarousel(finalResults, usedGenre, searchBudget, conditions.area || null, '', { budgetLabel: label, prefix: flexPrefix });
-          if (flexMsg) return flexMsg;
+          const label = isAntiChainSearch ? '個人店' : originalBudgetLabel;
+          const flexMsg = buildRestaurantCarousel(finalResults, usedGenre, actualBudget, conditions.area || null, '', { budgetLabel: label, prefix: flexPrefix });
+          const conditionText = buildSearchConditionText({
+            area: conditions.area,
+            genre: searchOpts.genreExplicit ? usedGenre : null,
+            budget: conditions.budget || extractBudgetFromMessages(requestedByUser),
+            budgetLabel: originalBudgetLabel,
+            lunch: searchOpts.lunch,
+          });
+          if (flexMsg) return withSearchPreamble(flexMsg, finalResults, conditionText);
         }
       } catch (e) {
         console.warn('generateFreeResponse different-request search failed:', e.message);
@@ -372,6 +397,10 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       // MT03: ジャンルが不明な場合、会話履歴全体からユーザーの意図を取得（Kanpaiの発言からも補完）
       let searchGenre = conditions.genre || guessGenreFromMessages(recentMessages.filter(m => m.display_name !== 'Kanpai')) || extractPreviousGenre(recentMessages) || '5';
       const searchOptions = conditions.options || {};
+      const explicitUserGenre = Boolean(conditions.genre) || Boolean(guessGenreFromMessages(
+        recentMessages.filter(m => m.display_name !== 'Kanpai')
+      ));
+      searchOptions.genreExplicit = explicitUserGenre;
 
       // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食に変更
       if (conditions.mealtime === 'lunch' && searchGenre === '5') {
@@ -409,30 +438,53 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
 
       try {
         const count = isAntiChain ? 8 : 5;
+        let actualBudget = searchBudget;
+        let droppedKeywords = [];
         let restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, count, searchOptions);
         // MT03: 検索0件の場合、予算を1段階上げてリトライ
         if ((!restaurants || restaurants.length === 0) && parseInt(searchBudget) < 4) {
           const relaxedBudget = String(parseInt(searchBudget) + 1);
+          actualBudget = relaxedBudget;
           restaurants = await search.searchRestaurants(searchGenre, relaxedBudget, searchArea, count, searchOptions);
         }
         // MT03: それでも0件なら、キーワードを外してリトライ（こだわり等で絞りすぎ防止）
         if ((!restaurants || restaurants.length === 0) && searchOptions.keywords && searchOptions.keywords.length > 0) {
+          droppedKeywords = [...searchOptions.keywords];
           const relaxedOptions = { ...searchOptions, keywords: [] };
           restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, count, relaxedOptions);
+          actualBudget = searchBudget;
         }
         if (restaurants && restaurants.length > 0) {
-          let results = restaurants;
+          const originalBudgetLabel = conditions.budgetLabel || extractBudgetLabelFromMessages(
+            recentMessages.filter(m => m.display_name !== 'Kanpai')
+          );
+          const budgetDisclosedResults = annotateBudgetAlternative(
+            restaurants,
+            searchBudget,
+            actualBudget,
+            originalBudgetLabel,
+          );
+          const resultsWithBudgetDisclosure = annotateDroppedKeywords(budgetDisclosedResults, droppedKeywords);
+          let results = resultsWithBudgetDisclosure;
           // S21: チェーン店っぽい店名をフィルタ
           if (isAntiChain) {
             const chainNames = /鳥貴族|磯丸|串カツ田中|ワタミ|白木屋|魚民|笑笑|はなの舞|甘太郎|土間土間|和民|金の蔵|目利きの銀次|山内農場|千年の宴|福福屋|さくら水産|養老乃瀧|日本海庄や|つぼ八|庄や|大庄|モンテローザ|コロワイド/;
-            results = restaurants.filter(r => !chainNames.test(r.name || ''));
-            if (results.length === 0) results = restaurants;
+            results = resultsWithBudgetDisclosure.filter(r => !chainNames.test(r.name || ''));
+            if (results.length === 0) results = resultsWithBudgetDisclosure;
           }
           const { buildRestaurantCarousel } = require('./flex');
           // S21: チェーン店除外時は「個人店」ラベルを表示
-          const label = isAntiChain ? '個人店' : conditions.budgetLabel;
-          const flexMsg = buildRestaurantCarousel(results.slice(0, 3), searchGenre, searchBudget, conditions.area || null, '', { budgetLabel: label, prefix: flexPrefix });
-          if (flexMsg) return flexMsg;
+          const label = isAntiChain ? '個人店' : originalBudgetLabel;
+          if ((actualBudget !== searchBudget && isConditionUpdate) || droppedKeywords.length > 0) flexPrefix = '';
+          const flexMsg = buildRestaurantCarousel(results.slice(0, 3), searchGenre, actualBudget, conditions.area || null, '', { budgetLabel: label, prefix: flexPrefix });
+          const conditionText = buildSearchConditionText({
+            area: conditions.area,
+            genre: explicitUserGenre ? searchGenre : null,
+            budget: conditions.budget || extractBudgetFromMessages(recentMessages.filter(m => m.display_name !== 'Kanpai').slice(-5)),
+            budgetLabel: originalBudgetLabel,
+            lunch: searchOptions.lunch,
+          });
+          if (flexMsg) return withSearchPreamble(flexMsg, results, conditionText);
         }
       } catch (e) {
         console.warn('generateFreeResponse search failed, falling back to AI:', e.message);
@@ -617,14 +669,20 @@ async function generateDMBasedSuggestion(recentMessages, foodHistory, dmResult, 
     const area = search.extractArea(recentMessages);
 
     // お店検索 → Flex優先
+    const genreExplicit = Boolean(dmResult.genre && dmResult.genre !== '5');
     const restaurants = await search.searchRestaurants(
-      dmResult.genre, dmResult.budget, area, 3
+      dmResult.genre, dmResult.budget, area, 3, { genreExplicit }
     );
 
     if (restaurants && restaurants.length > 0) {
       const { buildRestaurantCarousel } = require('./flex');
       const flexMsg = buildRestaurantCarousel(restaurants, dmResult.genre, dmResult.budget, area, groupId);
-      if (flexMsg) return flexMsg; // Flexオブジェクト返却
+      const conditionText = buildSearchConditionText({
+        area,
+        genre: genreExplicit ? dmResult.genre : null,
+        budget: dmResult.budget,
+      });
+      if (flexMsg) return withSearchPreamble(flexMsg, restaurants, conditionText); // Flexまたは前置き+Flex
     }
 
     // フォールバック: AIによる提案
@@ -771,6 +829,7 @@ async function generateProactiveApproach(context, recentMessages, groupId = '') 
 
     // ランチ要求かつジャンルがデフォルト(居酒屋)の場合は和食に変更
     const effectiveGenre = (searchOptions.lunch && genreGuess === '5') ? '1' : genreGuess;
+    searchOptions.genreExplicit = Boolean(genreGuess) && !(searchOptions.lunch && genreGuess === '5');
 
     // お店検索（エリアが判明している場合）→ Flex優先、fallbackにテキスト
     if (area && effectiveGenre) {
@@ -779,7 +838,13 @@ async function generateProactiveApproach(context, recentMessages, groupId = '') 
         // Flex Messageオブジェクトを返す（index.jsで判定してreplyMessage）
         const { buildRestaurantCarousel } = require('./flex');
         const flexMsg = buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area, groupId);
-        if (flexMsg) return flexMsg; // オブジェクト返却
+        const conditionText = buildSearchConditionText({
+          area,
+          genre: searchOptions.genreExplicit ? effectiveGenre : null,
+          budget: extractBudgetFromMessages(recentMessages.filter(m => m.display_name !== 'Kanpai').slice(-5)),
+          lunch: searchOptions.lunch,
+        });
+        if (flexMsg) return withSearchPreamble(flexMsg, restaurants, conditionText); // Flexまたは前置き+Flex
       }
     }
 
@@ -852,6 +917,18 @@ function extractBudgetFromMessages(messages) {
   for (const msg of orderedMessages) {
     const budget = search.extractBudget(msg.message);
     if (budget) return budget;
+  }
+  return null;
+}
+
+function extractBudgetLabelFromMessages(messages) {
+  const orderedMessages = messages.slice().reverse();
+  for (const msg of orderedMessages) {
+    const text = msg.message || '';
+    const manBudgetMatch = text.match(/([\d.]+)万(?:円)?(以内|以下|くらい)?/);
+    if (manBudgetMatch) return `${parseFloat(manBudgetMatch[1])}万円以内`;
+    const yenBudgetMatch = text.match(/([\d,]+)円(以内|以下|くらい)?/);
+    if (yenBudgetMatch) return `${yenBudgetMatch[1]}円以内`;
   }
   return null;
 }

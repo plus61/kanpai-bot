@@ -11,6 +11,7 @@ const brain = require('./brain');
 const kanji = require('./kanji');
 const collector = require('./collector');
 const flex = require('./flex');
+const { annotateBudgetAlternative, buildRelaxedSearchPreamble } = require('./search-preamble');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -315,7 +316,7 @@ async function handleEvent(event) {
         } else {
           await lineClient.replyMessage({
             replyToken: event.replyToken,
-            messages: [response]
+            messages: Array.isArray(response) ? response : [response]
           });
         }
         await memory.updateLastBotMessage(groupId);
@@ -378,13 +379,12 @@ async function handleEvent(event) {
       if (planCtx.shouldApproach) {
         const approachMsg = await brain.generateProactiveApproach(planCtx, recentMsgs, groupId);
         if (approachMsg) {
-          // Flex or テキストを自動判別
-          const lineMsg = typeof approachMsg === 'string'
-            ? { type: 'text', text: approachMsg }
-            : approachMsg; // Flexオブジェクトそのまま
+          const messages = typeof approachMsg === 'string'
+            ? [{ type: 'text', text: approachMsg }]
+            : Array.isArray(approachMsg) ? approachMsg : [approachMsg];
           await lineClient.replyMessage({
             replyToken: event.replyToken,
-            messages: [lineMsg]
+            messages
           });
           await memory.updateLastBotMessage(groupId);
         }
@@ -526,7 +526,7 @@ async function handleDMResponse(event, userId, text) {
           if (typeof suggestion === 'string') {
             await kanji.sendToGroupForce(session.group_id, suggestion);
           } else {
-            await lineClient.pushMessage({ to: session.group_id, messages: [suggestion] });
+            await lineClient.pushMessage({ to: session.group_id, messages: Array.isArray(suggestion) ? suggestion : [suggestion] });
           }
         }
       } else {
@@ -579,7 +579,17 @@ async function handleMention(event, groupId, userId, displayName, text) {
     const response = await brain.generateFreeResponse(recentMessages, text, displayName);
 
     // Flex or text response
-    if (response && typeof response === 'object' && response.type === 'flex') {
+    if (Array.isArray(response)) {
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: response
+      });
+      const savedText = response
+        .map(message => message.type === 'text' ? message.text : message.type === 'flex' ? message.altText : '')
+        .filter(Boolean)
+        .join('\n');
+      if (savedText) await memory.logMessage(groupId, 'bot', 'Kanpai', savedText);
+    } else if (response && typeof response === 'object' && response.type === 'flex') {
       await lineClient.replyMessage({
         replyToken: event.replyToken,
         messages: [response]
@@ -605,6 +615,23 @@ async function handleMention(event, groupId, userId, displayName, text) {
 }
 
 /**
+ * 表示する店舗全体の検索緩和条件を、返信とFlex要約で使う順に集約する。
+ */
+function mergeDisplayedSearchMeta(restaurants) {
+  const displayed = restaurants.slice(0, 3);
+  const baseSearchMeta = displayed.find(restaurant => restaurant?.searchMeta)?.searchMeta;
+  if (!baseSearchMeta) return null;
+
+  const relaxed = new Set(displayed.flatMap(restaurant =>
+    Array.isArray(restaurant?.searchMeta?.relaxed) ? restaurant.searchMeta.relaxed : []
+  ));
+  return {
+    ...baseSearchMeta,
+    relaxed: ['budget', 'lunch', 'area', 'genre'].filter(condition => relaxed.has(condition)),
+  };
+}
+
+/**
  * 食事提案処理
  */
 async function handleFoodSuggestion(event, groupId) {
@@ -626,6 +653,7 @@ async function handleFoodSuggestion(event, groupId) {
 
     // ジャンル推定: 直近メッセージを優先
     const genreGuess = brain.guessGenreFromMessages(recentMessages.slice(-5)) || '5';
+    searchOptions.genreExplicit = genreGuess !== '5' || /居酒屋/.test(currentMessage + ' ' + recentText);
     // 予算: 現在のメッセージを優先、なければ直近2件のみ参照（古い予算が混入しないように）
     // キーワードベースの予算推定（金額明示なしの場合）
     const inferBudgetFromKeywords = (text) => {
@@ -683,14 +711,17 @@ async function handleFoodSuggestion(event, groupId) {
     // エリアなしでも東京をデフォルトにして検索（応答なし防止）
     const searchArea = area || '東京';
     try {
+      let actualBudget = budgetGuess;
       let restaurants = await search.searchRestaurants(effectiveGenre, budgetGuess, searchArea, 3, searchOptions);
       // 高額帯で結果がない場合、一段下の予算でリトライ
       if ((!restaurants || restaurants.length === 0) && budgetGuess === '4') {
-        restaurants = await search.searchRestaurants(effectiveGenre, '3', searchArea, 3, searchOptions);
+        actualBudget = '3';
+        restaurants = await search.searchRestaurants(effectiveGenre, actualBudget, searchArea, 3, searchOptions);
       }
-      // S10/S20: まだ0件の場合、高級キーワード + 予算フィルタなし（'2'）でリトライ
+      // S10/S20: まだ0件の場合、さらに低い予算帯（〜4,000円）でリトライ
       if ((!restaurants || restaurants.length === 0) && isHighEnd) {
-        restaurants = await search.searchRestaurants(effectiveGenre, '2', searchArea, 3, searchOptions);
+        actualBudget = '2';
+        restaurants = await search.searchRestaurants(effectiveGenre, actualBudget, searchArea, 3, searchOptions);
       }
       // S10/S20: 結果が少ない場合、イタリアン・フレンチ(7)でも検索して補完（キーワード緩和）
       if (isHighEnd && restaurants && restaurants.length < 3) {
@@ -698,7 +729,7 @@ async function handleFoodSuggestion(event, groupId) {
         for (const sg of supplementGenres) {
           if (restaurants.length >= 3) break;
           try {
-            const extraResults = await search.searchRestaurants(sg, budgetGuess, searchArea, 3 - restaurants.length, {});
+            const extraResults = await search.searchRestaurants(sg, actualBudget, searchArea, 3 - restaurants.length, { genreExplicit: true });
             if (extraResults && extraResults.length > 0) {
               restaurants = restaurants.concat(extraResults).slice(0, 3);
             }
@@ -711,8 +742,19 @@ async function handleFoodSuggestion(event, groupId) {
         const userBudgetLabel = manBudgetMatchFC
           ? `${parseFloat(manBudgetMatchFC[1])}万円以内`
           : (currentMessage.match(/([\d,]+)円/) ? `${currentMessage.match(/([\d,]+)円/)[1]}円以内` : null);
+        const originalBudgetLabel = userBudgetLabel || (isHighEnd && budgetGuess === '4' ? '高級店' : null);
+        const resultsWithBudgetDisclosure = annotateBudgetAlternative(
+          restaurants,
+          budgetGuess,
+          actualBudget,
+          originalBudgetLabel,
+        );
         const flexOptions = { ...searchOptions, ...(userBudgetLabel ? { budgetLabel: userBudgetLabel } : {}), ...(diffPrefix ? { prefix: diffPrefix } : {}) };
-        const flexMsg = flex.buildRestaurantCarousel(restaurants, effectiveGenre, budgetGuess, area || null, groupId, flexOptions);
+        const displaySearchMeta = mergeDisplayedSearchMeta(resultsWithBudgetDisclosure);
+        const displayRestaurants = displaySearchMeta
+          ? [{ ...resultsWithBudgetDisclosure[0], searchMeta: displaySearchMeta }, ...resultsWithBudgetDisclosure.slice(1)]
+          : resultsWithBudgetDisclosure;
+        const flexMsg = flex.buildRestaurantCarousel(displayRestaurants, effectiveGenre, actualBudget, area || null, groupId, flexOptions);
         if (flexMsg) {
           // ユーザーの条件を反映した導入テキストを生成（currentMessageのみから抽出）
           const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
@@ -730,7 +772,7 @@ async function handleFoodSuggestion(event, groupId) {
           } else if (userBudgetMatch) {
             parts.push(`${userBudgetMatch[1]}円以内`);
           } else if (/奮発|高級|記念日|接待/.test(currentMessage)) {
-            parts.push(budgetMap[budgetGuess] || '');
+            parts.push(userBudgetLabel || (isHighEnd ? '高級店' : budgetMap[budgetGuess]) || '');
           } else if (budgetGuess && budgetMap[budgetGuess]) {
             parts.push(budgetMap[budgetGuess]);
           }
@@ -761,6 +803,9 @@ async function handleFoodSuggestion(event, groupId) {
               ? `${conditionText}で探したよ🔍`
               : 'おすすめ見つけたよ🔍';
           }
+
+          const honestPreamble = buildRelaxedSearchPreamble(conditionText, displaySearchMeta);
+          if (honestPreamble) preamble = honestPreamble;
 
           await lineClient.replyMessage({
             replyToken: event.replyToken,
@@ -794,7 +839,7 @@ async function handleFoodSuggestion(event, groupId) {
     if (typeof suggestion !== 'string') {
       await lineClient.replyMessage({
         replyToken: event.replyToken,
-        messages: [suggestion]
+        messages: Array.isArray(suggestion) ? suggestion : [suggestion]
       });
       await memory.updateLastBotMessage(groupId);
       return;

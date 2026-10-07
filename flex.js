@@ -2,16 +2,13 @@
  * flex.js - LINE Flex Message ビルダー
  * お店情報をカルーセル形式で表示する
  */
+const { buildSearchAdjustmentText } = require('./search-preamble');
 
 /**
  * 予算コード → 表示文字列
  */
 const BUDGET_LABEL = {
   '1': '〜2,000円', '2': '〜4,000円', '3': '〜6,000円', '4': '6,000円〜'
-};
-const GENRE_LABEL = {
-  '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋',
-  '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ',
 };
 
 // ジャンル別アクセントカラー
@@ -210,7 +207,9 @@ function buildShopBubble(shop, index, genre, groupId, budget, area) {
       contents: [
         {
           type: 'text',
-          text: GENRE_LABEL[genre] || 'お店',
+          text: typeof shop.genreName === 'string' && shop.genreName.trim()
+            ? shop.genreName.trim() : 'お店',
+          wrap: true,
           size: 'xxs',
           color: '#FFFFFF',
           align: 'center',
@@ -233,11 +232,27 @@ function buildShopBubble(shop, index, genre, groupId, budget, area) {
 function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '', options = {}) {
   if (!restaurants || restaurants.length === 0) return null;
 
-  const areaText = area ? `${area}周辺` : '周辺';
-  const genreText = GENRE_LABEL[genre] || 'お店';
-  // S04: ユーザーが明示した予算があればそれを表示（例: "3,000円以内"）
-  const budgetText = options.budgetLabel || BUDGET_LABEL[budget] || '';
-  const mealTypeText = options.lunch ? 'ランチ' : genreText;
+  const searchMeta = restaurants[0]?.searchMeta;
+  const relaxed = new Set(Array.isArray(searchMeta?.relaxed) ? searchMeta.relaxed : []);
+  const areaText = area ? (relaxed.has('area') ? `${area}近隣` : `${area}周辺`) : '周辺';
+  // 要約も表示対象の店舗データから作る。混在・欠損は中立表示にする。
+  const genreNames = restaurants.slice(0, 3).map(shop =>
+    typeof shop.genreName === 'string' ? shop.genreName.trim() : ''
+  );
+  const genreText = genreNames[0] && genreNames.every(name => name === genreNames[0])
+    ? genreNames[0] : 'お店';
+  // A fallback label must describe the actual alternative, never the original request.
+  const budgetAlternative = searchMeta?.budgetAlternative;
+  const budgetText = budgetAlternative
+    ? (budgetAlternative.kind === 'removed'
+      ? '予算上限なし（別案）'
+      : budgetAlternative.alternativeLabel
+        ? `別案: ${budgetAlternative.alternativeLabel}`
+        : '予算帯を変更した別案')
+    : relaxed.has('budget')
+      ? '予算条件を外した別案'
+      : (options.budgetLabel || BUDGET_LABEL[budget] || '');
+  const mealTypeText = options.lunch && !relaxed.has('lunch') ? 'ランチ' : genreText;
 
   const bubbles = restaurants.slice(0, 3).map((shop, i) =>
     buildShopBubble(shop, i, genre, groupId, budget, area)
@@ -245,7 +260,8 @@ function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '',
 
   // altTextに店名を含めて応答の具体性を高める
   const shopNames = restaurants.slice(0, 3).map(s => s.name).join('、');
-  const prefix = options.prefix ? `${options.prefix}\n` : '';
+  const prefixes = [options.prefix, buildSearchAdjustmentText(searchMeta)].filter(Boolean);
+  const prefix = prefixes.length > 0 ? `${prefixes.join('\n')}\n` : '';
   return {
     type: 'flex',
     altText: `${prefix}${areaText}の${mealTypeText}（${budgetText}）を${restaurants.length}件見つけたよ🍻\n${shopNames}\n詳細はカードをチェック！`,
