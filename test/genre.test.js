@@ -20,6 +20,7 @@ function loadModule(file, requireMock, env = {}) {
 }
 const searchPreamble = require('../search-preamble');
 const searchCriteria = require('../search-criteria');
+const { buildRelaxedSearchPreamble } = searchPreamble;
 const flex = loadModule('flex.js', name => {
   if (name === './search-preamble') return searchPreamble;
   throw new Error(`Unexpected dependency: ${name}`);
@@ -294,4 +295,47 @@ test('summary genre only reflects the three displayed shops and keeps prefix/bud
   assert.match(card.altText, /^架空の導入\n架空エリア周辺の中華（3,000円以内）/);
   assert.ok(!card.altText.includes('架空D'));
   assert.equal(card.contents.contents.length, 3);
+});
+
+test('an Ebisu address inside Shibuya ward is only returned as an adjacent-area result', async () => {
+  const ebisu = {
+    ...shop('fixture-ebisu-in-shibuya-ward', '海鮮・焼肉', { area: '恵比寿' }),
+    address: '東京都渋谷区恵比寿一丁目',
+  };
+  const { search, calls } = mockSearch({ responses: Array.from({ length: 4 }, () => ({ results: { shop: [ebisu] } })) });
+
+  const results = await search.searchRestaurants('7', '2', '渋谷', 1, { lunch: true });
+
+  assert.equal(calls.length, 4);
+  assert.equal(results[0].hotpepperId, 'fixture-ebisu-in-shibuya-ward');
+  assert.equal(results[0].searchMeta.matchedArea, '恵比寿');
+  assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['budget', 'lunch', 'area']);
+  assert.equal(searchCriteria.matchesArea({ address: '東京都渋谷区恵比寿一丁目' }, '渋谷'), false);
+  assert.equal(searchCriteria.matchesArea({ address: '東京都渋谷区渋谷一丁目' }, '渋谷'), true);
+  assert.match(buildRelaxedSearchPreamble('渋谷エリア・イタリアン・ランチ', results[0].searchMeta), /近隣エリアまで広げて探したよ/);
+});
+
+test('mixed exact and adjacent results disclose the full fallback set', async () => {
+  const empty = { results: { shop: [] } };
+  const responses = [
+    empty, empty, empty, // exact-area searches: original, budget-relaxed, lunch-relaxed
+    empty, empty, empty, // adjacent-area search with genre retained
+    { results: { shop: [shop('fixture-shibuya', '中華', { area: '渋谷' })] } },
+    { results: { shop: [shop('fixture-ebisu', '焼肉', { area: '恵比寿' })] } },
+    { results: { shop: [shop('fixture-omotesando', '洋食', { area: '表参道' })] } },
+  ];
+  const { search, calls } = mockSearch({ responses });
+
+  const results = await search.searchRestaurants('7', '2', '渋谷', 3, { lunch: true });
+
+  assert.equal(calls.length, 9);
+  assert.deepEqual(Array.from(results, result => result.smallAreaName), ['渋谷', '恵比寿', '表参道']);
+  for (const result of results) {
+    assert.deepEqual(Array.from(result.searchMeta.relaxed), ['budget', 'lunch', 'area', 'genre']);
+  }
+  const preamble = buildRelaxedSearchPreamble('渋谷エリア・イタリアン・ランチ・〜4,000円', results[0].searchMeta);
+  assert.match(preamble, /近隣エリアまで広げて/);
+  assert.match(preamble, /ジャンル条件を外して/);
+  const carousel = flex.buildRestaurantCarousel(results, '7', '2', '渋谷');
+  assert.match(carousel.altText, /近隣エリアまで広げて/);
 });

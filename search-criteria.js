@@ -31,9 +31,40 @@ function areaNamesFor(shop) {
   return names.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim());
 }
 
+function matchesAreaToken(value, area) {
+  const name = value.normalize('NFKC').replace(/[\s　]/g, '');
+  const target = area.normalize('NFKC').replace(/[\s　]/g, '');
+  if (!name || !target) return false;
+
+  let index = name.indexOf(target);
+  while (index !== -1) {
+    const next = name[index + target.length];
+    // A ward name is not evidence that a shop is in the neighborhood sharing
+    // that name: 恵比寿 is in 渋谷区, but is not the 渋谷 neighborhood.
+    if (next !== '区' || target.endsWith('区')) return true;
+    index = name.indexOf(target, index + target.length);
+  }
+  return false;
+}
+
 function matchesArea(shop, area) {
   if (!area) return true;
-  return areaNamesFor(shop).some(name => name.includes(area));
+
+  // Use the most specific structured area available. Falling through to a
+  // broader ward/city or the address after a mismatch reintroduces false hits.
+  const specificArea = [
+    shop?.smallAreaName,
+    shop?.small_area?.name,
+    shop?.areaName,
+    ...(Array.isArray(shop?.areaNames) ? shop.areaNames : []),
+    shop?.middleAreaName,
+    shop?.middle_area?.name,
+    shop?.serviceAreaName,
+    shop?.service_area?.name,
+  ].find(value => typeof value === 'string' && value.trim());
+
+  if (specificArea) return matchesAreaToken(specificArea, area);
+  return typeof shop?.address === 'string' && matchesAreaToken(shop.address, area);
 }
 
 function isLunchCandidate(openHours) {

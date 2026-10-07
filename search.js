@@ -302,7 +302,18 @@ async function searchRestaurants(genre, budget, area, limit = 3, options = {}) {
       if (stageResults.length >= limit) break;
     }
     if (stageResults.length > 0) {
-      results = stageResults.slice(0, limit);
+      // A final result set can mix the requested area with adjacent areas.
+      // Give every result the union so callers inspecting the first shop still
+      // disclose every relaxation used to build the response.
+      const usedRelaxations = new Set(stageResults.flatMap(shop => shop.searchMeta?.relaxed || []));
+      const relaxationOrder = ['budget', 'lunch', 'area', 'genre'];
+      const responseRelaxations = relaxationOrder.filter(condition => usedRelaxations.has(condition));
+      results = stageResults.slice(0, limit).map(shop => ({
+        ...shop,
+        searchMeta: shop.searchMeta
+          ? { ...shop.searchMeta, relaxed: responseRelaxations }
+          : shop.searchMeta,
+      }));
       break;
     }
   }
