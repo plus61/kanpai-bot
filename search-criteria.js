@@ -15,6 +15,13 @@ const ADJACENT_AREAS = Object.freeze({
   '難波': ['心斎橋', '日本橋'],
 });
 
+// Address-only HotPepper records need a few explicit neighborhood aliases:
+// the ward name itself must not make every address in that ward an exact hit.
+const ADDRESS_NEIGHBORHOODS = Object.freeze({
+  '渋谷': Object.freeze({ ward: '渋谷区', names: ['道玄坂', '宇田川町'] }),
+  '新宿': Object.freeze({ ward: '新宿区', names: ['歌舞伎町'] }),
+});
+
 function getAdjacentAreas(area) {
   return ADJACENT_AREAS[String(area || '').trim()] || [];
 }
@@ -47,6 +54,20 @@ function matchesAreaToken(value, area) {
   return false;
 }
 
+function matchesAddressArea(address, area) {
+  if (matchesAreaToken(address, area)) return true;
+
+  const neighborhoodRule = ADDRESS_NEIGHBORHOODS[area];
+  if (!neighborhoodRule) return false;
+
+  const normalizedAddress = address.normalize('NFKC').replace(/[\s　]/g, '');
+  const wardIndex = normalizedAddress.indexOf(neighborhoodRule.ward);
+  if (wardIndex === -1) return false;
+
+  const neighborhoodStart = wardIndex + neighborhoodRule.ward.length;
+  return neighborhoodRule.names.some(name => normalizedAddress.indexOf(name, neighborhoodStart) !== -1);
+}
+
 function matchesArea(shop, area) {
   if (!area) return true;
 
@@ -64,7 +85,7 @@ function matchesArea(shop, area) {
   ].find(value => typeof value === 'string' && value.trim());
 
   if (specificArea) return matchesAreaToken(specificArea, area);
-  return typeof shop?.address === 'string' && matchesAreaToken(shop.address, area);
+  return typeof shop?.address === 'string' && matchesAddressArea(shop.address, area);
 }
 
 function isLunchCandidate(openHours) {

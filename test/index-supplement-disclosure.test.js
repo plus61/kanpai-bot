@@ -155,3 +155,41 @@ test('high-end supplement discloses union of relaxations across displayed shops'
   assert.doesNotMatch(flexMessage.altText, /渋谷周辺/);
   assert.deepEqual(shibuya.searchMeta.relaxed, []);
 });
+
+test('high-end lower-budget retry discloses the alternative in preamble and Flex altText', async () => {
+  const alternatives = ['a', 'b', 'c'].map(id => shop(`lower-${id}`, '渋谷', []));
+  const harness = loadIndexHarness({
+    recentMessages: [{
+      display_name: 'fixture-user',
+      message: '渋谷で接待向けのイタリアンを教えて',
+    }],
+    searchResults: [[], alternatives],
+  });
+  const handleWebhook = harness.routes.post.get('/webhook').at(-1);
+  const response = {
+    statusCode: null,
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+
+  await handleWebhook({
+    body: {
+      events: [{
+        type: 'message',
+        replyToken: 'fixture-reply',
+        source: { type: 'group', groupId: 'fixture-group', userId: 'fixture-user' },
+        message: { type: 'text', text: '渋谷で接待向けのイタリアンを教えて' },
+      }],
+    },
+  }, response);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(harness.searchCalls.map(call => call[1]), ['4', '3']);
+  assert.equal(harness.replies.length, 1);
+  const [textMessage, flexMessage] = harness.replies[0].messages;
+  const disclosure = '元の予算条件（高級店）では見つからなかったため、例えば予算〜6,000円なら候補があるよ';
+  assert.match(textMessage.text, /渋谷エリア・イタリアン・高級店・接待向きでは見つからなかったため、例えば予算〜6,000円なら候補があるよ/);
+  assert.match(flexMessage.altText, new RegExp(disclosure));
+  assert.match(flexMessage.altText, /（別案: 〜6,000円）/);
+  assert.doesNotMatch(flexMessage.altText, /（高級店）を/);
+});

@@ -11,7 +11,7 @@ const brain = require('./brain');
 const kanji = require('./kanji');
 const collector = require('./collector');
 const flex = require('./flex');
-const { buildRelaxedSearchPreamble } = require('./search-preamble');
+const { annotateBudgetAlternative, buildRelaxedSearchPreamble } = require('./search-preamble');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -711,14 +711,17 @@ async function handleFoodSuggestion(event, groupId) {
     // エリアなしでも東京をデフォルトにして検索（応答なし防止）
     const searchArea = area || '東京';
     try {
+      let actualBudget = budgetGuess;
       let restaurants = await search.searchRestaurants(effectiveGenre, budgetGuess, searchArea, 3, searchOptions);
       // 高額帯で結果がない場合、一段下の予算でリトライ
       if ((!restaurants || restaurants.length === 0) && budgetGuess === '4') {
-        restaurants = await search.searchRestaurants(effectiveGenre, '3', searchArea, 3, searchOptions);
+        actualBudget = '3';
+        restaurants = await search.searchRestaurants(effectiveGenre, actualBudget, searchArea, 3, searchOptions);
       }
-      // S10/S20: まだ0件の場合、高級キーワード + 予算フィルタなし（'2'）でリトライ
+      // S10/S20: まだ0件の場合、さらに低い予算帯（〜4,000円）でリトライ
       if ((!restaurants || restaurants.length === 0) && isHighEnd) {
-        restaurants = await search.searchRestaurants(effectiveGenre, '2', searchArea, 3, searchOptions);
+        actualBudget = '2';
+        restaurants = await search.searchRestaurants(effectiveGenre, actualBudget, searchArea, 3, searchOptions);
       }
       // S10/S20: 結果が少ない場合、イタリアン・フレンチ(7)でも検索して補完（キーワード緩和）
       if (isHighEnd && restaurants && restaurants.length < 3) {
@@ -726,7 +729,7 @@ async function handleFoodSuggestion(event, groupId) {
         for (const sg of supplementGenres) {
           if (restaurants.length >= 3) break;
           try {
-            const extraResults = await search.searchRestaurants(sg, budgetGuess, searchArea, 3 - restaurants.length, { genreExplicit: true });
+            const extraResults = await search.searchRestaurants(sg, actualBudget, searchArea, 3 - restaurants.length, { genreExplicit: true });
             if (extraResults && extraResults.length > 0) {
               restaurants = restaurants.concat(extraResults).slice(0, 3);
             }
@@ -739,12 +742,19 @@ async function handleFoodSuggestion(event, groupId) {
         const userBudgetLabel = manBudgetMatchFC
           ? `${parseFloat(manBudgetMatchFC[1])}万円以内`
           : (currentMessage.match(/([\d,]+)円/) ? `${currentMessage.match(/([\d,]+)円/)[1]}円以内` : null);
+        const originalBudgetLabel = userBudgetLabel || (isHighEnd && budgetGuess === '4' ? '高級店' : null);
+        const resultsWithBudgetDisclosure = annotateBudgetAlternative(
+          restaurants,
+          budgetGuess,
+          actualBudget,
+          originalBudgetLabel,
+        );
         const flexOptions = { ...searchOptions, ...(userBudgetLabel ? { budgetLabel: userBudgetLabel } : {}), ...(diffPrefix ? { prefix: diffPrefix } : {}) };
-        const displaySearchMeta = mergeDisplayedSearchMeta(restaurants);
+        const displaySearchMeta = mergeDisplayedSearchMeta(resultsWithBudgetDisclosure);
         const displayRestaurants = displaySearchMeta
-          ? [{ ...restaurants[0], searchMeta: displaySearchMeta }, ...restaurants.slice(1)]
-          : restaurants;
-        const flexMsg = flex.buildRestaurantCarousel(displayRestaurants, effectiveGenre, budgetGuess, area || null, groupId, flexOptions);
+          ? [{ ...resultsWithBudgetDisclosure[0], searchMeta: displaySearchMeta }, ...resultsWithBudgetDisclosure.slice(1)]
+          : resultsWithBudgetDisclosure;
+        const flexMsg = flex.buildRestaurantCarousel(displayRestaurants, effectiveGenre, actualBudget, area || null, groupId, flexOptions);
         if (flexMsg) {
           // ユーザーの条件を反映した導入テキストを生成（currentMessageのみから抽出）
           const genreMap = { '1': '和食', '2': '洋食', '3': '中華', '4': '焼肉', '5': '居酒屋', '6': 'ラーメン', '7': 'イタリアン', '8': 'カフェ' };
@@ -762,7 +772,7 @@ async function handleFoodSuggestion(event, groupId) {
           } else if (userBudgetMatch) {
             parts.push(`${userBudgetMatch[1]}円以内`);
           } else if (/奮発|高級|記念日|接待/.test(currentMessage)) {
-            parts.push(budgetMap[budgetGuess] || '');
+            parts.push(userBudgetLabel || (isHighEnd ? '高級店' : budgetMap[budgetGuess]) || '');
           } else if (budgetGuess && budgetMap[budgetGuess]) {
             parts.push(budgetMap[budgetGuess]);
           }

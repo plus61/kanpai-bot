@@ -2,7 +2,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildRelaxedSearchPreamble, buildSearchAdjustmentText } = require('../search-preamble');
+const { annotateBudgetAlternative, buildRelaxedSearchPreamble, buildSearchAdjustmentText } = require('../search-preamble');
+const flex = require('../flex');
 
 test('strict results keep the existing preamble', () => {
   assert.equal(
@@ -49,4 +50,52 @@ test('Places fallback is identified even when there is no filter to relax', () =
     }),
     'HotPepperで見つからず、Google Placesでも探したよ🗺️（予算・ジャンル・ランチの一致は保証されないよ）'
   );
+});
+
+test('lower-budget fallback names the changed budget consistently in preamble and Flex altText', () => {
+  const original = [{ name: '架空店', genreName: '焼肉', searchMeta: { provider: 'hotpepper', relaxed: [] } }];
+  const results = annotateBudgetAlternative(original, '4', '3', '高級店');
+  const disclosure = '高級店では見つからなかったため、例えば予算〜6,000円なら候補があるよ🔍（元の条件とは異なるよ）';
+
+  assert.notEqual(results, original);
+  assert.equal(buildRelaxedSearchPreamble('高級店', results[0].searchMeta), disclosure);
+  const card = flex.buildRestaurantCarousel(results, '4', '3', '渋谷');
+  assert.match(card.altText, /元の予算条件（高級店）では見つからなかったため、例えば予算〜6,000円なら候補があるよ/);
+  assert.match(card.altText, /渋谷周辺の焼肉（別案: 〜6,000円）/);
+  assert.doesNotMatch(card.altText, /（高級店）を/);
+});
+
+test('removed or unknown budget filters disclose removal without inventing an amount', () => {
+  const results = annotateBudgetAlternative([{
+    name: '架空店',
+    searchMeta: { provider: 'hotpepper', relaxed: ['budget'] },
+  }], '4', '3', '高級店');
+  const preamble = buildRelaxedSearchPreamble('高級店', results[0].searchMeta);
+  const card = flex.buildRestaurantCarousel(results, '4', '3', '渋谷');
+
+  assert.match(preamble, /予算上限を外した候補/);
+  assert.match(preamble, /元の条件とは異なる/);
+  assert.doesNotMatch(preamble, /〜6,000円/);
+  assert.match(card.altText, /元の予算条件（高級店）では見つからなかったため、予算上限を外した候補/);
+  assert.match(card.altText, /予算上限なし（別案）/);
+  assert.doesNotMatch(card.altText, /〜6,000円/);
+
+  const unknownBudget = annotateBudgetAlternative([{
+    name: '架空別店',
+    searchMeta: { provider: 'hotpepper', relaxed: [] },
+  }], '2', 'unknown');
+  const unknownText = buildRelaxedSearchPreamble('渋谷エリア・焼肉・〜4,000円', unknownBudget[0].searchMeta);
+  assert.match(unknownText, /予算帯を変えた別候補/);
+  assert.doesNotMatch(unknownText, /例えば予算/);
+});
+
+test('unchanged budget keeps the original output and adds no alternative wording', () => {
+  const original = [{ name: '架空店', genreName: '焼肉', searchMeta: { provider: 'hotpepper', relaxed: [] } }];
+  const results = annotateBudgetAlternative(original, '3', '3', '5,000円以内');
+  const card = flex.buildRestaurantCarousel(results, '4', '3', '渋谷', '', { budgetLabel: '5,000円以内' });
+
+  assert.equal(results, original);
+  assert.equal(buildRelaxedSearchPreamble('5,000円以内', results[0].searchMeta), null);
+  assert.match(card.altText, /渋谷周辺の焼肉（5,000円以内）/);
+  assert.doesNotMatch(card.altText, /別案|元の予算条件/);
 });

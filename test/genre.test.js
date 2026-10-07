@@ -312,7 +312,33 @@ test('an Ebisu address inside Shibuya ward is only returned as an adjacent-area 
   assert.deepEqual(Array.from(results[0].searchMeta.relaxed), ['budget', 'lunch', 'area']);
   assert.equal(searchCriteria.matchesArea({ address: '東京都渋谷区恵比寿一丁目' }, '渋谷'), false);
   assert.equal(searchCriteria.matchesArea({ address: '東京都渋谷区渋谷一丁目' }, '渋谷'), true);
+  assert.equal(searchCriteria.matchesArea({ address: '東京都渋谷区道玄坂二丁目' }, '渋谷'), true);
+  assert.equal(searchCriteria.matchesArea({ address: '東京都渋谷区宇田川町一丁目' }, '渋谷'), true);
+  assert.equal(searchCriteria.matchesArea({ address: '東京都新宿区歌舞伎町一丁目' }, '新宿'), true);
+  assert.equal(searchCriteria.matchesArea({ address: '東京都新宿区歌舞伎町一丁目' }, '渋谷'), false);
   assert.match(buildRelaxedSearchPreamble('渋谷エリア・イタリアン・ランチ', results[0].searchMeta), /近隣エリアまで広げて探したよ/);
+});
+
+test('address-only Shibuya and Shinjuku neighborhood shops match their requested area', async () => {
+  const addressOnlyShop = (id, address) => {
+    const value = shop(id, '焼肉');
+    delete value.small_area;
+    return { ...value, address };
+  };
+  const ebisu = addressOnlyShop('fixture-address-ebisu', '東京都渋谷区恵比寿一丁目');
+  const dogenzaka = addressOnlyShop('fixture-address-dogenzaka', '東京都渋谷区道玄坂二丁目');
+  const udagawa = addressOnlyShop('fixture-address-udagawa', '東京都渋谷区宇田川町一丁目');
+  const kabukicho = addressOnlyShop('fixture-address-kabukicho', '東京都新宿区歌舞伎町一丁目');
+  const shibuyaHarness = mockSearch({ shops: [ebisu, dogenzaka, udagawa] });
+  const shinjukuHarness = mockSearch({ shops: [kabukicho] });
+
+  const shibuyaResults = await shibuyaHarness.search.searchRestaurants('4', '2', '渋谷', 3);
+  const shinjukuResults = await shinjukuHarness.search.searchRestaurants('4', '2', '新宿', 1);
+
+  assert.deepEqual(Array.from(shibuyaResults, result => result.hotpepperId), [
+    'fixture-address-dogenzaka', 'fixture-address-udagawa',
+  ]);
+  assert.deepEqual(Array.from(shinjukuResults, result => result.hotpepperId), ['fixture-address-kabukicho']);
 });
 
 test('mixed exact and adjacent results disclose the full fallback set', async () => {

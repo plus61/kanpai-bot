@@ -241,8 +241,17 @@ function buildRestaurantCarousel(restaurants, genre, budget, area, groupId = '',
   );
   const genreText = genreNames[0] && genreNames.every(name => name === genreNames[0])
     ? genreNames[0] : 'お店';
-  // S04: ユーザーが明示した予算があればそれを表示（例: "3,000円以内"）
-  const budgetText = relaxed.has('budget') ? '予算条件を緩和' : (options.budgetLabel || BUDGET_LABEL[budget] || '');
+  // A fallback label must describe the actual alternative, never the original request.
+  const budgetAlternative = searchMeta?.budgetAlternative;
+  const budgetText = budgetAlternative
+    ? (budgetAlternative.kind === 'removed'
+      ? '予算上限なし（別案）'
+      : budgetAlternative.alternativeLabel
+        ? `別案: ${budgetAlternative.alternativeLabel}`
+        : '予算帯を変更した別案')
+    : relaxed.has('budget')
+      ? '予算条件を外した別案'
+      : (options.budgetLabel || BUDGET_LABEL[budget] || '');
   const mealTypeText = options.lunch && !relaxed.has('lunch') ? 'ランチ' : genreText;
 
   const bubbles = restaurants.slice(0, 3).map((shop, i) =>
