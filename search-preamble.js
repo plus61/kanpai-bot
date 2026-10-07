@@ -42,6 +42,20 @@ function annotateBudgetAlternative(restaurants, originalBudget, actualBudget, or
   }));
 }
 
+function annotateDroppedKeywords(restaurants, droppedKeywords) {
+  if (!Array.isArray(restaurants) || restaurants.length === 0 || !Array.isArray(droppedKeywords)) return restaurants;
+  const keywords = [...new Set(droppedKeywords.filter(keyword => typeof keyword === 'string' && keyword.trim()).map(keyword => keyword.trim()))];
+  if (keywords.length === 0) return restaurants;
+
+  return restaurants.map(restaurant => ({
+    ...restaurant,
+    searchMeta: {
+      ...(restaurant?.searchMeta || {}),
+      droppedKeywords: keywords,
+    },
+  }));
+}
+
 function buildBudgetAlternativeText(searchMeta, conditionText) {
   const alternative = searchMeta?.budgetAlternative;
   if (!alternative) return '';
@@ -60,6 +74,20 @@ function buildBudgetAlternativeText(searchMeta, conditionText) {
   return `${requested}見つからなかったため、予算帯を変えた別候補を出すよ🔍（元の条件とは異なるよ）`;
 }
 
+function buildDroppedKeywordsText(searchMeta, conditionText) {
+  const keywords = Array.isArray(searchMeta?.droppedKeywords)
+    ? [...new Set(searchMeta.droppedKeywords.filter(keyword => typeof keyword === 'string' && keyword.trim()).map(keyword => keyword.trim()))]
+    : [];
+  if (keywords.length === 0) return '';
+
+  const original = typeof conditionText === 'string' && conditionText.trim()
+    ? `「${conditionText.trim()}」では条件に合うお店が見つからなかったため`
+    : '元の条件では見つからなかったため';
+  const dietary = keywords.some(keyword => /ベジタリアン|ヴィーガン|菜食|グルテンフリー|アレルギー/.test(keyword));
+  const caveat = dietary ? '（食事制約への適合は未確認だよ）' : '（元の条件に合うとは限らないよ）';
+  return `${original}、検索キーワード（${keywords.join('・')}）を外した候補を出すよ🔍${caveat}`;
+}
+
 function buildSearchAdjustmentText(searchMeta) {
   if (!searchMeta) return '';
   const relaxed = Array.isArray(searchMeta.relaxed) ? searchMeta.relaxed : [];
@@ -69,6 +97,8 @@ function buildSearchAdjustmentText(searchMeta) {
     .filter(Boolean);
   const messages = [];
   if (hasBudgetAlternative) messages.push(buildBudgetAlternativeText(searchMeta));
+  const droppedKeywordsText = buildDroppedKeywordsText(searchMeta);
+  if (droppedKeywordsText) messages.push(droppedKeywordsText);
   if (adjustments.length > 0) messages.push(`${adjustments.join('、')}探したよ🔍`);
   if (searchMeta.provider === 'places') {
     messages.push('HotPepperで見つからず、Google Placesでも探したよ🗺️（予算・ジャンル・ランチの一致は保証されないよ）');
@@ -101,6 +131,9 @@ function buildRelaxedSearchPreamble(conditionText, searchMeta) {
     messages.push(buildBudgetAlternativeText(searchMeta, conditionText));
   }
 
+  const droppedKeywordsText = buildDroppedKeywordsText(searchMeta, conditionText);
+  if (droppedKeywordsText) messages.push(droppedKeywordsText);
+
   if (searchMeta.provider === 'places') messages.push(adjustmentText.split('\n').slice(-1)[0]);
 
   return messages.length > 0 ? messages.join('\n') : null;
@@ -121,7 +154,9 @@ function buildSearchConditionText({ area, genre, budget, budgetLabel, lunch } = 
 }
 
 module.exports = {
+  annotateDroppedKeywords,
   annotateBudgetAlternative,
+  buildDroppedKeywordsText,
   buildBudgetAlternativeText,
   buildRelaxedSearchPreamble,
   buildSearchAdjustmentText,

@@ -5,7 +5,7 @@
 require('dotenv').config();
 const OpenAI = require('openai');
 const search = require('./search');
-const { annotateBudgetAlternative, buildRelaxedSearchPreamble, buildSearchConditionText } = require('./search-preamble');
+const { annotateBudgetAlternative, annotateDroppedKeywords, buildRelaxedSearchPreamble, buildSearchConditionText } = require('./search-preamble');
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = 'gpt-4o-mini';
@@ -439,6 +439,7 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
       try {
         const count = isAntiChain ? 8 : 5;
         let actualBudget = searchBudget;
+        let droppedKeywords = [];
         let restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, count, searchOptions);
         // MT03: 検索0件の場合、予算を1段階上げてリトライ
         if ((!restaurants || restaurants.length === 0) && parseInt(searchBudget) < 4) {
@@ -448,6 +449,7 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
         }
         // MT03: それでも0件なら、キーワードを外してリトライ（こだわり等で絞りすぎ防止）
         if ((!restaurants || restaurants.length === 0) && searchOptions.keywords && searchOptions.keywords.length > 0) {
+          droppedKeywords = [...searchOptions.keywords];
           const relaxedOptions = { ...searchOptions, keywords: [] };
           restaurants = await search.searchRestaurants(searchGenre, searchBudget, searchArea, count, relaxedOptions);
           actualBudget = searchBudget;
@@ -456,12 +458,13 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
           const originalBudgetLabel = conditions.budgetLabel || extractBudgetLabelFromMessages(
             recentMessages.filter(m => m.display_name !== 'Kanpai')
           );
-          const resultsWithBudgetDisclosure = annotateBudgetAlternative(
+          const budgetDisclosedResults = annotateBudgetAlternative(
             restaurants,
             searchBudget,
             actualBudget,
             originalBudgetLabel,
           );
+          const resultsWithBudgetDisclosure = annotateDroppedKeywords(budgetDisclosedResults, droppedKeywords);
           let results = resultsWithBudgetDisclosure;
           // S21: チェーン店っぽい店名をフィルタ
           if (isAntiChain) {
@@ -472,7 +475,7 @@ async function generateFreeResponse(recentMessages, userMessage, displayName) {
           const { buildRestaurantCarousel } = require('./flex');
           // S21: チェーン店除外時は「個人店」ラベルを表示
           const label = isAntiChain ? '個人店' : originalBudgetLabel;
-          if (actualBudget !== searchBudget && isConditionUpdate) flexPrefix = '';
+          if ((actualBudget !== searchBudget && isConditionUpdate) || droppedKeywords.length > 0) flexPrefix = '';
           const flexMsg = buildRestaurantCarousel(results.slice(0, 3), searchGenre, actualBudget, conditions.area || null, '', { budgetLabel: label, prefix: flexPrefix });
           const conditionText = buildSearchConditionText({
             area: conditions.area,

@@ -29,7 +29,9 @@ function loadBrainHarness(searchResults) {
       if (amount <= 6000) return '3';
       return '4';
     },
-    extractSearchOptions() { return {}; },
+    extractSearchOptions(text) {
+      return String(text || '').includes('ベジタリアン') ? { keywords: ['ベジタリアン'] } : {};
+    },
     async searchRestaurants(...args) {
       calls.push(args);
       assert.ok(searchResults.length, 'Unexpected search call');
@@ -62,7 +64,7 @@ function loadBrainHarness(searchResults) {
   return { brain: module.exports, calls };
 }
 
-function shop(id) {
+function shop(id, relaxed = []) {
   return {
     hotpepperId: id,
     name: `fixture-${id}`,
@@ -70,11 +72,11 @@ function shop(id) {
     budget: '5,000円',
     address: '東京都渋谷区道玄坂二丁目',
     open: '17:00〜22:00',
-    searchMeta: { provider: 'hotpepper', relaxed: [] },
+    searchMeta: { provider: 'hotpepper', relaxed },
   };
 }
 
-const threeShops = () => [shop('a'), shop('b'), shop('c')];
+const threeShops = (relaxed = []) => [shop('a', relaxed), shop('b', relaxed), shop('c', relaxed)];
 
 test('condition-update retry discloses that the returned budget exceeds the original cap', async () => {
   const { brain, calls } = loadBrainHarness([[], threeShops()]);
@@ -89,6 +91,7 @@ test('condition-update retry discloses that the returned budget exceeds the orig
   assert.match(preamble.text, /渋谷エリア・焼肉・3000円以内では見つからなかったため、例えば予算〜6,000円/);
   assert.match(card.altText, /別案: 〜6,000円/);
   assert.doesNotMatch(card.altText, /条件変更OK！3000円以内で探し直した/);
+  assert.doesNotMatch(card.altText, /検索キーワード|食事制約への適合/);
 });
 
 test('more-results retry preserves the prior exact budget and labels the new cap as an alternative', async () => {
@@ -102,4 +105,49 @@ test('more-results retry preserves the prior exact budget and labels the new cap
   const [preamble, card] = response;
   assert.match(preamble.text, /渋谷エリア・焼肉・3000円以内では見つからなかったため、例えば予算〜6,000円/);
   assert.match(card.altText, /別案: 〜6,000円/);
+});
+
+test('keyword fallback restores the original budget and discloses that dietary fit is unverified', async () => {
+  const { brain, calls } = loadBrainHarness([[], [], threeShops()]);
+  const request = '渋谷でベジタリアンの焼肉を3000円以内で';
+  const response = await brain.generateFreeResponse([
+    { display_name: 'fixture-user', message: request },
+  ], request, 'fixture-user');
+
+  assert.deepEqual(calls.map(call => call[1]), ['2', '3', '2']);
+  assert.deepEqual(calls.map(call => [...(call[4].keywords || [])]), [
+    ['ベジタリアン'], ['ベジタリアン'], [],
+  ]);
+  const preamble = Array.isArray(response) ? response.find(message => message.type === 'text') : null;
+  const card = Array.isArray(response) ? response.find(message => message.type === 'flex') : response;
+  assert.equal(card?.type, 'flex');
+  assert.match(preamble?.text || '', /「渋谷エリア・焼肉・3000円以内」では条件に合うお店が見つからなかったため、検索キーワード（ベジタリアン）を外した候補/);
+  assert.match(preamble?.text || '', /食事制約への適合は未確認だよ/);
+  assert.match(card.altText, /検索キーワード（ベジタリアン）を外した候補/);
+  assert.match(card.altText, /食事制約への適合は未確認だよ/);
+  assert.match(card.altText, /渋谷周辺の焼肉（3000円以内）を3件/);
+  assert.doesNotMatch(card.altText, /条件変更OK|別案|〜6,000円/);
+});
+
+test('keyword removal combined with an unfiltered result reports both changes without reviving the budget alternative', async () => {
+  const { brain, calls } = loadBrainHarness([[], [], threeShops(['budget'])]);
+  const request = '渋谷でベジタリアンの焼肉を3000円以内で';
+  const response = await brain.generateFreeResponse([
+    { display_name: 'fixture-user', message: request },
+  ], request, 'fixture-user');
+
+  assert.deepEqual(calls.map(call => call[1]), ['2', '3', '2']);
+  assert.deepEqual(calls.map(call => [...(call[4].keywords || [])]), [
+    ['ベジタリアン'], ['ベジタリアン'], [],
+  ]);
+  const preamble = Array.isArray(response) ? response.find(message => message.type === 'text') : null;
+  const card = Array.isArray(response) ? response.find(message => message.type === 'flex') : response;
+  assert.equal(card?.type, 'flex');
+  assert.match(preamble?.text || '', /3000円以内.*予算条件を外して/);
+  assert.match(preamble?.text || '', /検索キーワード（ベジタリアン）を外した候補/);
+  assert.match(preamble?.text || '', /食事制約への適合は未確認だよ/);
+  assert.match(card.altText, /検索キーワード（ベジタリアン）を外した候補/);
+  assert.match(card.altText, /予算条件を外して/);
+  assert.match(card.altText, /食事制約への適合は未確認だよ/);
+  assert.doesNotMatch(card.altText, /条件変更OK|例えば予算〜6,000円|別案: 〜6,000円/);
 });
